@@ -155,75 +155,20 @@ function cleanIsbn(rawCode) {
 
 async function fetchBookByISBN(isbn) {
   showScannerStatus("Recherche du livre…");
-  const setCover = (url) => {
-    if (!url) return;
-    tempCover = url;
-    coverUrl.value = url;
-    updatePreview();
-  };
+  console.log("Recherche ISBN backend :", isbn);
 
   try {
-    const googleUrl = `https://www.googleapis.com/books/v1/volumes?q=isbn:${encodeURIComponent(isbn)}`;
-    console.log("Recherche Google Books :", googleUrl);
-    const g = await fetch(googleUrl);
-    if (g.ok) {
-      const gj = await g.json();
-      console.log("Réponse Google Books :", gj);
-      if (gj.totalItems > 0 && gj.items?.length) {
-        const info = gj.items[0]?.volumeInfo || {};
-        if (info.title) t.value = info.title;
-        if (Array.isArray(info.authors)) a.value = info.authors.join(", ");
-        const image = info.imageLinks?.thumbnail || info.imageLinks?.smallThumbnail;
-        if (image) setCover(image.replace("http://", "https://"));
-        showScannerStatus("Livre trouvé ✅");
-        return true;
-      }
-    }
+    const r = await fetch(`/api/isbn/${encodeURIComponent(isbn)}`);
+    const data = await r.json();
+    console.log("Réponse backend ISBN :", data);
 
-    const openLibraryBooksUrl = `https://openlibrary.org/api/books?bibkeys=ISBN:${encodeURIComponent(isbn)}&format=json&jscmd=data`;
-    console.log("Recherche Open Library :", openLibraryBooksUrl);
-    const ob = await fetch(openLibraryBooksUrl);
-    if (ob.ok) {
-      const obj = await ob.json();
-      console.log("Réponse Open Library :", obj);
-      const entry = obj[`ISBN:${isbn}`];
-      if (entry) {
-        if (entry.title) t.value = entry.title;
-        if (Array.isArray(entry.authors)) {
-          a.value = entry.authors.map((author) => author?.name).filter(Boolean).join(", ");
-        }
-        setCover(`https://covers.openlibrary.org/b/isbn/${encodeURIComponent(isbn)}-L.jpg`);
-        showScannerStatus("Livre trouvé ✅");
-        return true;
-      }
-    }
-
-    const openLibraryIsbnUrl = `https://openlibrary.org/isbn/${encodeURIComponent(isbn)}.json`;
-    console.log("Recherche Open Library :", openLibraryIsbnUrl);
-    const oi = await fetch(openLibraryIsbnUrl);
-    if (oi.ok) {
-      const oij = await oi.json();
-      console.log("Réponse Open Library :", oij);
-      if (oij.title) {
-        t.value = oij.title;
-      }
-      if (Array.isArray(oij.authors) && oij.authors.length) {
-        const names = await Promise.all(oij.authors.map(async (author) => {
-          const ref = author?.key;
-          if (!ref) return "";
-          try {
-            const ra = await fetch(`https://openlibrary.org${ref}.json`);
-            if (!ra.ok) return "";
-            const aj = await ra.json();
-            return aj.name || "";
-          } catch {
-            return "";
-          }
-        }));
-        a.value = names.filter(Boolean).join(", ");
-      }
-      setCover(`https://covers.openlibrary.org/b/isbn/${encodeURIComponent(isbn)}-L.jpg`);
-      showScannerStatus("Livre trouvé ✅");
+    if (r.ok && data?.found) {
+      t.value = data.title || "";
+      a.value = data.authors || "";
+      coverUrl.value = data.cover || "";
+      tempCover = data.cover || "";
+      updatePreview();
+      showScannerStatus("Livre trouvé automatiquement");
       return true;
     }
 
@@ -236,6 +181,7 @@ async function fetchBookByISBN(isbn) {
     return false;
   }
 }
+
 
 async function handleDetectedCode(raw) {
   if (!scannerActive) return;

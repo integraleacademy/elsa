@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
@@ -53,6 +56,97 @@ def put_books():
     _write_books(payload)
     return jsonify({"ok": True, "count": len(payload)})
 
+
+
+
+def _normalize_isbn(raw: str) -> str:
+    compact = (raw or "").strip().replace(" ", "").replace("-", "")
+    clean = "".join(ch for ch in compact if ch.isdigit() or ch in "Xx").upper()
+    if len(clean) == 13 and (clean.startswith("978") or clean.startswith("979")):
+        return clean
+    if len(clean) == 10:
+        return clean
+    return ""
+
+
+def _safe_get_json(url: str) -> dict | list | None:
+    try:
+        with urllib.request.urlopen(url, timeout=8) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as err:
+        print("Erreur API:", url, err)
+        return None
+
+
+@app.get("/api/isbn/<isbn>")
+def lookup_isbn(isbn):
+    normalized_isbn = _normalize_isbn(isbn)
+    print("Recherche ISBN:", normalized_isbn or isbn)
+
+    if not normalized_isbn:
+        return jsonify({"found": False, "isbn": isbn, "error": "Livre non trouvé"})
+
+    google_url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{urllib.parse.quote(normalized_isbn)}"
+    print("Google Books:", google_url)
+    google_data = _safe_get_json(google_url)
+    if isinstance(google_data, dict) and google_data.get("totalItems", 0) > 0 and google_data.get("items"):
+        info = google_data["items"][0].get("volumeInfo", {})
+        title = info.get("title")
+        if title:
+            authors = ", ".join(info.get("authors", []))
+            cover = info.get("imageLinks", {}).get("thumbnail") or info.get("imageLinks", {}).get("smallThumbnail") or ""
+            if cover.startswith("http://"):
+                cover = "https://" + cover[len("http://"):]
+            print("Livre trouvé:", title)
+            return jsonify({"found": True, "isbn": normalized_isbn, "title": title, "authors": authors, "cover": cover})
+
+    open_books_url = (
+        "https://openlibrary.org/api/books"
+        f"?bibkeys=ISBN:{urllib.parse.quote(normalized_isbn)}&format=json&jscmd=data"
+    )
+    print("Open Library:", open_books_url)
+    open_books_data = _safe_get_json(open_books_url)
+    if isinstance(open_books_data, dict):
+        entry = open_books_data.get(f"ISBN:{normalized_isbn}")
+        if isinstance(entry, dict) and entry.get("title"):
+            title = entry.get("title", "")
+            authors = ", ".join(
+                author.get("name", "")
+                for author in entry.get("authors", [])
+                if isinstance(author, dict) and author.get("name")
+            )
+            cover = ""
+            if isinstance(entry.get("cover"), dict):
+                cover = entry["cover"].get("large") or entry["cover"].get("medium") or entry["cover"].get("small") or ""
+            if not cover:
+                cover = f"https://covers.openlibrary.org/b/isbn/{urllib.parse.quote(normalized_isbn)}-L.jpg"
+            print("Livre trouvé:", title)
+            return jsonify({"found": True, "isbn": normalized_isbn, "title": title, "authors": authors, "cover": cover})
+
+    open_isbn_url = f"https://openlibrary.org/isbn/{urllib.parse.quote(normalized_isbn)}.json"
+    print("Open Library:", open_isbn_url)
+    open_isbn_data = _safe_get_json(open_isbn_url)
+    if isinstance(open_isbn_data, dict) and open_isbn_data.get("title"):
+        title = open_isbn_data.get("title", "")
+        authors = ""
+        author_names: list[str] = []
+        for author in open_isbn_data.get("authors", []):
+            if not isinstance(author, dict):
+                continue
+            key = author.get("key")
+            if not key:
+                continue
+            author_url = f"https://openlibrary.org{key}.json"
+            author_data = _safe_get_json(author_url)
+            if isinstance(author_data, dict) and author_data.get("name"):
+                author_names.append(author_data["name"])
+        if author_names:
+            authors = ", ".join(author_names)
+        cover = f"https://covers.openlibrary.org/b/isbn/{urllib.parse.quote(normalized_isbn)}-L.jpg"
+        print("Livre trouvé:", title)
+        return jsonify({"found": True, "isbn": normalized_isbn, "title": title, "authors": authors, "cover": cover})
+
+    return jsonify({"found": False, "isbn": normalized_isbn, "error": "Livre non trouvé"})
 
 @app.get("/<path:path>")
 def static_files(path):
