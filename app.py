@@ -105,6 +105,57 @@ def _safe_get_json(url: str) -> dict | list | None:
         return None
 
 
+def _join_unique(values: list[str]) -> str:
+    clean = [(v or "").strip() for v in values if (v or "").strip()]
+    return ", ".join(dict.fromkeys(clean))
+
+
+def _build_payload(
+    isbn: str,
+    *,
+    title: str = "",
+    authors: str = "",
+    publisher: str = "",
+    published_date: str = "",
+    page_count: int = 0,
+    language: str = "",
+    categories: str = "",
+    description: str = "",
+    cover: str = "",
+    images: list[str] | None = None,
+    source: str = "",
+) -> dict:
+    image_list = [img for img in (images or []) if isinstance(img, str) and img.strip()]
+    return {
+        "found": bool(title),
+        "source": source,
+        "isbn": isbn,
+        "title": title,
+        "authors": authors,
+        "publisher": publisher,
+        "publishedDate": published_date,
+        "pageCount": page_count or 0,
+        "language": language,
+        "categories": categories,
+        "description": description,
+        "cover": cover,
+        "images": image_list,
+    }
+
+
+def _extract_google_images(image_links: dict) -> list[str]:
+    if not isinstance(image_links, dict):
+        return []
+    urls: list[str] = []
+    for key in ("extraLarge", "large", "medium", "small", "thumbnail", "smallThumbnail"):
+        value = image_links.get(key)
+        if isinstance(value, str) and value.strip():
+            if value.startswith("http://"):
+                value = "https://" + value[len("http://"):]
+            urls.append(value)
+    return list(dict.fromkeys(urls))
+
+
 def _read_isbn_cache() -> dict[str, dict]:
     if not ISBN_CACHE_FILE.exists():
         return {}
@@ -233,18 +284,19 @@ def lookup_bnf_isbn(isbn: str) -> dict | None:
                 elif code == "d" and text and not date:
                     date = text
 
-    authors_text = ", ".join(dict.fromkeys(a for a in authors if a))
+    authors_text = _join_unique(authors)
     if title and authors_text:
-        return {
-            "found": True,
-            "source": "bnf",
-            "isbn": isbn,
-            "title": title,
-            "authors": authors_text,
-            "publisher": publisher,
-            "date": date,
-            "cover": find_cover_for_isbn(isbn),
-        }
+        cover_url = find_cover_for_isbn(isbn)
+        return _build_payload(
+            isbn,
+            source="bnf",
+            title=title,
+            authors=authors_text,
+            publisher=publisher,
+            published_date=date,
+            cover=cover_url,
+            images=[cover_url] if cover_url else [],
+        )
     return None
 
 
@@ -291,8 +343,26 @@ def lookup_isbn(isbn):
             cover = info.get("imageLinks", {}).get("thumbnail") or info.get("imageLinks", {}).get("smallThumbnail") or ""
             if cover.startswith("http://"):
                 cover = "https://" + cover[len("http://"):]
+            image_list = _extract_google_images(info.get("imageLinks", {}))
+            if not cover and image_list:
+                cover = image_list[0]
+            if not cover:
+                cover = find_cover_for_isbn(normalized_isbn)
             print("Livre trouvé:", title)
-            payload = {"found": True, "isbn": normalized_isbn, "title": title, "authors": authors, "cover": cover}
+            payload = _build_payload(
+                normalized_isbn,
+                source="google_books_strict",
+                title=title,
+                authors=authors,
+                publisher=info.get("publisher", ""),
+                published_date=info.get("publishedDate", ""),
+                page_count=info.get("pageCount", 0) if isinstance(info.get("pageCount"), int) else 0,
+                language=info.get("language", ""),
+                categories=_join_unique(info.get("categories", []) if isinstance(info.get("categories"), list) else []),
+                description=info.get("description", ""),
+                cover=cover,
+                images=image_list if image_list else ([cover] if cover else []),
+            )
             _cache_isbn_result(normalized_isbn, payload)
             return jsonify(payload)
 
@@ -319,8 +389,26 @@ def lookup_isbn(isbn):
             cover = info.get("imageLinks", {}).get("thumbnail") or info.get("imageLinks", {}).get("smallThumbnail") or ""
             if cover.startswith("http://"):
                 cover = "https://" + cover[len("http://"):]
+            image_list = _extract_google_images(info.get("imageLinks", {}))
+            if not cover and image_list:
+                cover = image_list[0]
+            if not cover:
+                cover = find_cover_for_isbn(normalized_isbn)
             print("Livre trouvé:", title)
-            payload = {"found": True, "isbn": normalized_isbn, "title": title, "authors": authors, "cover": cover}
+            payload = _build_payload(
+                normalized_isbn,
+                source="google_books_large",
+                title=title,
+                authors=authors,
+                publisher=info.get("publisher", ""),
+                published_date=info.get("publishedDate", ""),
+                page_count=info.get("pageCount", 0) if isinstance(info.get("pageCount"), int) else 0,
+                language=info.get("language", ""),
+                categories=_join_unique(info.get("categories", []) if isinstance(info.get("categories"), list) else []),
+                description=info.get("description", ""),
+                cover=cover,
+                images=image_list if image_list else ([cover] if cover else []),
+            )
             _cache_isbn_result(normalized_isbn, payload)
             return jsonify(payload)
 
@@ -344,8 +432,26 @@ def lookup_isbn(isbn):
                 cover = entry["cover"].get("large") or entry["cover"].get("medium") or entry["cover"].get("small") or ""
             if not cover:
                 cover = f"https://covers.openlibrary.org/b/isbn/{urllib.parse.quote(normalized_isbn)}-L.jpg"
+            images = []
+            if isinstance(entry.get("cover"), dict):
+                images = _join_unique([entry["cover"].get("large", ""), entry["cover"].get("medium", ""), entry["cover"].get("small", "")]).split(", ")
             print("Livre trouvé:", title)
-            payload = {"found": True, "isbn": normalized_isbn, "title": title, "authors": authors, "cover": cover}
+            payload = _build_payload(
+                normalized_isbn,
+                source="openlibrary_api_books",
+                title=title,
+                authors=authors,
+                publisher=_join_unique(
+                    [p.get("name", "") for p in entry.get("publishers", []) if isinstance(p, dict)]
+                ),
+                published_date=entry.get("publish_date", ""),
+                page_count=entry.get("number_of_pages", 0) if isinstance(entry.get("number_of_pages"), int) else 0,
+                categories=_join_unique(
+                    [s.get("name", "") for s in entry.get("subjects", []) if isinstance(s, dict)]
+                ),
+                cover=cover,
+                images=images if images and images != [""] else ([cover] if cover else []),
+            )
             _cache_isbn_result(normalized_isbn, payload)
             return jsonify(payload)
 
@@ -369,8 +475,22 @@ def lookup_isbn(isbn):
         if author_names:
             authors = ", ".join(author_names)
         cover = f"https://covers.openlibrary.org/b/isbn/{urllib.parse.quote(normalized_isbn)}-L.jpg"
+        if not _is_valid_cover_url(cover):
+            cover = find_cover_for_isbn(normalized_isbn)
         print("Livre trouvé:", title)
-        payload = {"found": True, "isbn": normalized_isbn, "title": title, "authors": authors, "cover": cover}
+        payload = _build_payload(
+            normalized_isbn,
+            source="openlibrary_isbn",
+            title=title,
+            authors=authors,
+            published_date=open_isbn_data.get("publish_date", ""),
+            page_count=open_isbn_data.get("number_of_pages", 0)
+            if isinstance(open_isbn_data.get("number_of_pages"), int)
+            else 0,
+            publisher=_join_unique(open_isbn_data.get("publishers", [])) if isinstance(open_isbn_data.get("publishers"), list) else "",
+            cover=cover,
+            images=[cover] if cover else [],
+        )
         _cache_isbn_result(normalized_isbn, payload)
         return jsonify(payload)
 

@@ -32,6 +32,13 @@ function openModal(i = null) {
   const b = i === null ? { title: "", author: "", status: "À lire", rating: 0, note: "", cover: "" } : books[i];
   t.value = b.title || "";
   a.value = b.author || "";
+  publisher.value = b.publisher || "";
+  publishedDate.value = b.publishedDate || "";
+  pages.value = b.pages || "";
+  language.value = b.language || "";
+  categories.value = b.categories || "";
+  description.value = b.description || "";
+  images.value = Array.isArray(b.images) ? b.images.join(", ") : (b.images || "");
   st.value = b.status || "À lire";
   rt.value = b.rating || 0;
   note.value = b.note || "";
@@ -73,6 +80,13 @@ function saveBook() {
     title: t.value.trim(), author: a.value.trim(), status: st.value,
     rating: +rt.value, note: note.value.trim(), cover: tempCover,
     isbn: (typeof isbn !== "undefined" ? isbn.value.trim() : ""),
+    publisher: publisher.value.trim(),
+    publishedDate: publishedDate.value.trim(),
+    pages: pages.value ? +pages.value : 0,
+    language: language.value.trim(),
+    categories: categories.value.trim(),
+    description: description.value.trim(),
+    images: images.value.split(",").map(v => v.trim()).filter(Boolean),
     added: editIndex === null ? Date.now() : books[editIndex].added
   };
   if (editIndex === null) books.unshift(b); else books[editIndex] = b;
@@ -105,7 +119,7 @@ function render() {
 
   grid.innerHTML = arr.length ? arr.map(b => `
     <article class="book"><div class="cover">${fakeCover(b)}${b.cover ? `<img src="${esc(b.cover)}" onerror="this.remove()">` : ""}</div>
-    <div class="info"><div class="title">${esc(b.title)}</div><div class="author">${esc(b.author)}</div>${b.isbn ? `<div class="isbn">ISBN : ${esc(b.isbn)}</div>` : ""}<div class="stars">${stars(b.rating)}</div>
+    <div class="info"><div class="title">${esc(b.title)}</div><div class="author">${esc(b.author)}</div>${b.isbn ? `<div class="isbn">ISBN : ${esc(b.isbn)}</div>` : ""}${b.publisher ? `<div class="isbn">Éditeur : ${esc(b.publisher)}</div>` : ""}${b.publishedDate ? `<div class="isbn">Date : ${esc(b.publishedDate)}</div>` : ""}${b.pages ? `<div class="isbn">Pages : ${esc(String(b.pages))}</div>` : ""}<div class="stars">${stars(b.rating)}</div>
     <span class="badge">${esc(b.status)}</span><div class="cardBtns"><button onclick="openModal(${b._i})">Modifier</button><button onclick="deleteBook(${b._i})">Supprimer</button></div></div></article>
   `).join("") : `<div class="empty">Aucun livre pour le moment.<br><br>Clique sur “+ Ajouter” pour commencer ta bibliothèque 📚</div>`;
   update();
@@ -168,8 +182,15 @@ async function fetchBookByISBN(isbn) {
   if (cached?.title) {
     t.value = cached.title || "";
     a.value = cached.authors || "";
+    publisher.value = cached.publisher || "";
+    publishedDate.value = cached.publishedDate || "";
+    pages.value = cached.pageCount || "";
+    language.value = cached.language || "";
+    categories.value = cached.categories || "";
+    description.value = cached.description || "";
+    images.value = Array.isArray(cached.images) ? cached.images.join(", ") : "";
     coverUrl.value = cached.cover || "";
-    tempCover = cached.cover || "";
+    tempCover = cached.cover || (Array.isArray(cached.images) ? (cached.images[0] || "") : "");
     updatePreview();
     console.log("Source utilisée :", "cache local");
     showScannerStatus(`ISBN détecté : ${isbn} — Livre trouvé automatiquement`);
@@ -184,14 +205,29 @@ async function fetchBookByISBN(isbn) {
     if (r.ok && data?.found) {
       t.value = data.title || "";
       a.value = data.authors || "";
+      publisher.value = data.publisher || "";
+      publishedDate.value = data.publishedDate || data.date || "";
+      pages.value = data.pageCount || "";
+      language.value = data.language || "";
+      categories.value = data.categories || "";
+      description.value = data.description || "";
+      images.value = Array.isArray(data.images) ? data.images.join(", ") : "";
       coverUrl.value = data.cover || "";
-      tempCover = data.cover || "";
+      tempCover = data.cover || (Array.isArray(data.images) ? (data.images[0] || "") : "");
       updatePreview();
       isbnCache[isbn] = {
         isbn,
         title: data.title || "",
         authors: data.authors || "",
-        cover: data.cover || ""
+        cover: data.cover || "",
+        publisher: data.publisher || "",
+        publishedDate: data.publishedDate || data.date || "",
+        pageCount: data.pageCount || 0,
+        language: data.language || "",
+        categories: data.categories || "",
+        description: data.description || ""
+        ,
+        images: Array.isArray(data.images) ? data.images : []
       };
       saveIsbnCache();
       console.log("Source utilisée :", "backend api");
