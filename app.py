@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import unicodedata
 from datetime import datetime, timezone
 import urllib.error
 import urllib.parse
@@ -105,9 +107,26 @@ def _safe_get_json(url: str) -> dict | list | None:
         return None
 
 
+def _normalize_text_key(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value or "")
+    without_accents = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    lowered = without_accents.lower()
+    return re.sub(r"[^a-z0-9]+", " ", lowered).strip()
+
+
 def _join_unique(values: list[str]) -> str:
-    clean = [(v or "").strip() for v in values if (v or "").strip()]
-    return ", ".join(dict.fromkeys(clean))
+    seen: set[str] = set()
+    result: list[str] = []
+    for raw in values:
+        cleaned = (raw or "").strip()
+        if not cleaned:
+            continue
+        key = _normalize_text_key(cleaned)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(cleaned)
+    return ", ".join(result)
 
 
 def _build_payload(
@@ -180,6 +199,38 @@ def _cache_isbn_result(isbn: str, payload: dict) -> None:
     row["cachedAt"] = datetime.now(timezone.utc).isoformat()
     cache[isbn] = row
     _write_isbn_cache(cache)
+
+
+def _extract_google_volume_info(data: dict | None) -> dict:
+    if not isinstance(data, dict) or data.get("totalItems", 0) <= 0 or not data.get("items"):
+        return {}
+    info = data["items"][0].get("volumeInfo", {})
+    if not isinstance(info, dict):
+        return {}
+    return info
+
+
+def _enrich_with_google(isbn: str, payload: dict) -> dict:
+    url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{urllib.parse.quote(isbn)}"
+    try:
+        info = _extract_google_volume_info(_safe_get_json(url))
+    except urllib.error.HTTPError:
+        return payload
+    if not info:
+        return payload
+    image_list = _extract_google_images(info.get("imageLinks", {}))
+    return {
+        **payload,
+        "publisher": payload.get("publisher") or info.get("publisher", ""),
+        "publishedDate": payload.get("publishedDate") or info.get("publishedDate", ""),
+        "pageCount": payload.get("pageCount") or (info.get("pageCount", 0) if isinstance(info.get("pageCount"), int) else 0),
+        "language": payload.get("language") or info.get("language", ""),
+        "categories": payload.get("categories") or _join_unique(info.get("categories", []) if isinstance(info.get("categories"), list) else []),
+        "description": payload.get("description") or info.get("description", ""),
+        "cover": payload.get("cover") or (image_list[0] if image_list else ""),
+        "images": payload.get("images") or image_list,
+        "source": payload.get("source", "") + "+google_enrich",
+    }
 
 
 def _lookup_google_cover(isbn: str) -> str:
@@ -317,8 +368,9 @@ def lookup_isbn(isbn):
     bnf_data = lookup_bnf_isbn(normalized_isbn)
     if bnf_data:
         print("Source utilisée : BnF")
-        _cache_isbn_result(normalized_isbn, bnf_data)
-        return jsonify(bnf_data)
+        enriched_bnf = _enrich_with_google(normalized_isbn, bnf_data)
+        _cache_isbn_result(normalized_isbn, enriched_bnf)
+        return jsonify(enriched_bnf)
 
     google_url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{urllib.parse.quote(normalized_isbn)}"
     print("Google Books (strict):", google_url)
