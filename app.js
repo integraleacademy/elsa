@@ -105,7 +105,7 @@ function render() {
 
   grid.innerHTML = arr.length ? arr.map(b => `
     <article class="book"><div class="cover">${fakeCover(b)}${b.cover ? `<img src="${esc(b.cover)}" onerror="this.remove()">` : ""}</div>
-    <div class="info"><div class="title">${esc(b.title)}</div><div class="author">${esc(b.author)}</div><div class="stars">${stars(b.rating)}</div>
+    <div class="info"><div class="title">${esc(b.title)}</div><div class="author">${esc(b.author)}</div>${b.isbn ? `<div class="isbn">ISBN : ${esc(b.isbn)}</div>` : ""}<div class="stars">${stars(b.rating)}</div>
     <span class="badge">${esc(b.status)}</span><div class="cardBtns"><button onclick="openModal(${b._i})">Modifier</button><button onclick="deleteBook(${b._i})">Supprimer</button></div></div></article>
   `).join("") : `<div class="empty">Aucun livre pour le moment.<br><br>Clique sur “+ Ajouter” pour commencer ta bibliothèque 📚</div>`;
   update();
@@ -195,12 +195,14 @@ async function fetchBookByISBN(isbn) {
       };
       saveIsbnCache();
       console.log("Source utilisée :", "backend api");
+      if (data.isbn && typeof window.isbn !== "undefined") window.isbn.value = data.isbn;
       showScannerStatus("Livre trouvé automatiquement");
       return true;
     }
 
     console.log("Source utilisée :", "aucune");
-    showScannerStatus(`ISBN détecté : ${isbn} — Livre non trouvé automatiquement. Vous pouvez compléter les informations manuellement.`);
+    if (typeof window.isbn !== "undefined") window.isbn.value = data?.isbn || isbn;
+    showScannerStatus((data && data.message) || `ISBN détecté : ${isbn} — Livre non trouvé automatiquement. Vous pouvez compléter les informations manuellement.`);
     return false;
   } catch (e) {
     console.error(e);

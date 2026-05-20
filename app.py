@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -76,6 +77,63 @@ def _safe_get_json(url: str) -> dict | list | None:
     except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as err:
         print("Erreur API:", url, err)
         return None
+
+
+def _safe_get_text(url: str) -> str | None:
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; ElsaLibraryBot/1.0; +https://example.local)"
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=8) as response:
+            charset = response.headers.get_content_charset() or "utf-8"
+            return response.read().decode(charset, errors="replace")
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError) as err:
+        print("Erreur page web:", url, err)
+        return None
+
+
+def _extract_title_from_html(html: str) -> str:
+    patterns = [
+        r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+name=["\']twitter:title["\'][^>]+content=["\']([^"\']+)["\']',
+        r"<title>(.*?)</title>",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, html, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            title = re.sub(r"\s+", " ", match.group(1)).strip()
+            if title:
+                return title
+    return ""
+
+
+def _search_book_web_fallback(isbn: str) -> dict | None:
+    sources = [
+        ("Decitre", f"https://www.decitre.fr/rechercher/result?q={urllib.parse.quote(isbn)}"),
+        ("Babelio", f"https://www.babelio.com/recherche.php?q={urllib.parse.quote(isbn)}"),
+        ("LesLibraires", f"https://www.leslibraires.fr/listeliv.php?base=paper&form_recherche_avancee=ok&isbn={urllib.parse.quote(isbn)}"),
+    ]
+    for source_name, url in sources:
+        print("Fallback web:", source_name, url)
+        html = _safe_get_text(url)
+        if not html:
+            continue
+        if isbn not in html.replace("-", "").replace(" ", ""):
+            continue
+        title = _extract_title_from_html(html)
+        if title:
+            return {
+                "found": True,
+                "isbn": isbn,
+                "title": title,
+                "authors": "",
+                "cover": "",
+                "source": source_name,
+            }
+    return None
 
 
 @app.get("/api/isbn/<isbn>")
@@ -160,7 +218,17 @@ def lookup_isbn(isbn):
         print("Livre trouvé:", title)
         return jsonify({"found": True, "isbn": normalized_isbn, "title": title, "authors": authors, "cover": cover})
 
-    return jsonify({"found": False, "isbn": normalized_isbn, "error": "Livre non trouvé"})
+    scraped = _search_book_web_fallback(normalized_isbn)
+    if scraped:
+        return jsonify(scraped)
+
+    return jsonify(
+        {
+            "found": False,
+            "isbn": normalized_isbn,
+            "message": "Livre non trouvé automatiquement. Complète le titre et l’auteur manuellement.",
+        }
+    )
 
 @app.get("/<path:path>")
 def static_files(path):
