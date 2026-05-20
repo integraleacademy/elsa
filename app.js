@@ -7,6 +7,7 @@ let scannerTimer = null;
 let scannerActive = false;
 let barcodeDetector = null;
 let zxingReader = null;
+let zxingControls = null;
 
 function save() { localStorage.setItem(STORAGE_KEY, JSON.stringify(books)); }
 function esc(s) { return (s || "").replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m])); }
@@ -219,6 +220,7 @@ async function handleDetectedCode(raw) {
 }
 
 async function startScanner() {
+  stopScanner();
   const panel = document.getElementById("scannerPanel");
   const video = document.getElementById("scannerVideo");
   panel.hidden = false;
@@ -236,34 +238,55 @@ async function startScanner() {
   }
 
   try {
-    scannerStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: "environment" } },
-      audio: false
-    });
+    const attempts = [
+      { video: { facingMode: { exact: "environment" } }, audio: false },
+      { video: { facingMode: "environment" }, audio: false },
+      { video: true, audio: false }
+    ];
+    let lastErr = null;
+    for (const c of attempts) {
+      try {
+        scannerStream = await navigator.mediaDevices.getUserMedia(c);
+        break;
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    if (!scannerStream) throw lastErr || new Error("Camera stream unavailable");
+
+    video.setAttribute("playsinline", "true");
+    video.muted = true;
     video.srcObject = scannerStream;
     await video.play();
     scannerActive = true;
     showScannerStatus("Recherche du livre…");
 
     if ("BarcodeDetector" in window) {
-      barcodeDetector = new BarcodeDetector({ formats: ["ean_13", "upc_a"] });
-      scannerTimer = setInterval(async () => {
-        if (!scannerActive) return;
-        try {
-          const codes = await barcodeDetector.detect(video);
-          if (codes?.length) await handleDetectedCode(codes[0].rawValue || "");
-        } catch (e) {
-          console.warn("BarcodeDetector error", e);
-        }
-      }, 400);
-      return;
+      try {
+        barcodeDetector = new BarcodeDetector({ formats: ["ean_13", "upc_a"] });
+      } catch (err) {
+        console.warn("BarcodeDetector unsupported formats, fallback ZXing", err);
+        barcodeDetector = null;
+      }
+      if (barcodeDetector) {
+        scannerTimer = setInterval(async () => {
+          if (!scannerActive) return;
+          try {
+            const codes = await barcodeDetector.detect(video);
+            if (codes?.length) await handleDetectedCode(codes[0].rawValue || "");
+          } catch (e) {
+            console.warn("BarcodeDetector error", e);
+          }
+        }, 450);
+        return;
+      }
     }
 
     const ok = await ensureZXingLoaded();
     if (!ok) throw new Error("ZXing indisponible.");
 
     zxingReader = new window.ZXing.BrowserMultiFormatReader();
-    zxingReader.decodeFromVideoElement(video, (result) => {
+    zxingControls = await zxingReader.decodeFromVideoDevice(undefined, video, (result) => {
       if (result?.text) handleDetectedCode(result.text);
     });
   } catch (e) {
@@ -275,7 +298,7 @@ async function startScanner() {
       alert("Accès caméra refusé. Autorise la caméra pour scanner un ISBN.");
     } else {
       showScannerStatus("Impossible de démarrer la caméra.");
-      alert("Impossible de démarrer la caméra sur ce téléphone.");
+      alert("Impossible de démarrer la caméra sur ce téléphone. Vérifie Safari > Réglages de site web > Caméra puis réessaie.");
     }
   }
 }
@@ -286,6 +309,8 @@ function stopScanner() {
     clearInterval(scannerTimer);
     scannerTimer = null;
   }
+  if (zxingControls?.stop) zxingControls.stop();
+  zxingControls = null;
   if (zxingReader?.reset) zxingReader.reset();
   if (scannerStream) {
     scannerStream.getTracks().forEach(track => track.stop());
