@@ -312,6 +312,28 @@ async function handleManualIsbnSearch() {
   await fetchBookByISBN(isbn);
 }
 
+
+function cameraTroubleshootingMessage(err) {
+  const name = err?.name || "";
+  const iosHint = (/iPhone|iPad|iPod/i.test(navigator.userAgent))
+    ? "Sur iPhone/iPad, ouvrez le site directement dans Safari (pas dans un navigateur intégré) puis autorisez Caméra dans aA > Réglages du site web > Caméra."
+    : "";
+
+  if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+    return "Accès caméra refusé. Autorise la caméra pour ce site puis relance le scan.";
+  }
+  if (name === "NotReadableError" || name === "TrackStartError") {
+    return "Caméra occupée par une autre app. Ferme les autres apps utilisant la caméra puis réessaie.";
+  }
+  if (name === "OverconstrainedError" || name === "ConstraintNotSatisfiedError") {
+    return "Caméra arrière indisponible. Réessaie après rotation du téléphone ou redémarrage du navigateur.";
+  }
+  if (name === "AbortError") {
+    return "Démarrage caméra interrompu. Réessaie dans quelques secondes.";
+  }
+  return (`Impossible de démarrer la caméra sur ce téléphone. ${iosHint}`).trim();
+}
+
 async function startScanner() {
   stopScanner();
   const panel = document.getElementById("scannerPanel");
@@ -385,14 +407,9 @@ async function startScanner() {
   } catch (e) {
     console.error(e);
     stopScanner();
-    const denied = e?.name === "NotAllowedError" || e?.name === "PermissionDeniedError";
-    if (denied) {
-      showScannerStatus("Accès caméra refusé.");
-      alert("Accès caméra refusé. Autorise la caméra pour scanner un ISBN.");
-    } else {
-      showScannerStatus("Impossible de démarrer la caméra.");
-      alert("Impossible de démarrer la caméra sur ce téléphone. Vérifie Safari > Réglages de site web > Caméra puis réessaie.");
-    }
+    const msg = cameraTroubleshootingMessage(e);
+    showScannerStatus(msg);
+    alert(msg);
   }
 }
 
