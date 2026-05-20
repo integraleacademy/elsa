@@ -105,6 +105,41 @@ def _safe_get_json(url: str) -> dict | list | None:
         return None
 
 
+def _join_unique(values: list[str]) -> str:
+    clean = [(v or "").strip() for v in values if (v or "").strip()]
+    return ", ".join(dict.fromkeys(clean))
+
+
+def _build_payload(
+    isbn: str,
+    *,
+    title: str = "",
+    authors: str = "",
+    publisher: str = "",
+    published_date: str = "",
+    page_count: int = 0,
+    language: str = "",
+    categories: str = "",
+    description: str = "",
+    cover: str = "",
+    source: str = "",
+) -> dict:
+    return {
+        "found": bool(title),
+        "source": source,
+        "isbn": isbn,
+        "title": title,
+        "authors": authors,
+        "publisher": publisher,
+        "publishedDate": published_date,
+        "pageCount": page_count or 0,
+        "language": language,
+        "categories": categories,
+        "description": description,
+        "cover": cover,
+    }
+
+
 def _read_isbn_cache() -> dict[str, dict]:
     if not ISBN_CACHE_FILE.exists():
         return {}
@@ -233,18 +268,17 @@ def lookup_bnf_isbn(isbn: str) -> dict | None:
                 elif code == "d" and text and not date:
                     date = text
 
-    authors_text = ", ".join(dict.fromkeys(a for a in authors if a))
+    authors_text = _join_unique(authors)
     if title and authors_text:
-        return {
-            "found": True,
-            "source": "bnf",
-            "isbn": isbn,
-            "title": title,
-            "authors": authors_text,
-            "publisher": publisher,
-            "date": date,
-            "cover": find_cover_for_isbn(isbn),
-        }
+        return _build_payload(
+            isbn,
+            source="bnf",
+            title=title,
+            authors=authors_text,
+            publisher=publisher,
+            published_date=date,
+            cover=find_cover_for_isbn(isbn),
+        )
     return None
 
 
@@ -292,7 +326,19 @@ def lookup_isbn(isbn):
             if cover.startswith("http://"):
                 cover = "https://" + cover[len("http://"):]
             print("Livre trouvé:", title)
-            payload = {"found": True, "isbn": normalized_isbn, "title": title, "authors": authors, "cover": cover}
+            payload = _build_payload(
+                normalized_isbn,
+                source="google_books_strict",
+                title=title,
+                authors=authors,
+                publisher=info.get("publisher", ""),
+                published_date=info.get("publishedDate", ""),
+                page_count=info.get("pageCount", 0) if isinstance(info.get("pageCount"), int) else 0,
+                language=info.get("language", ""),
+                categories=_join_unique(info.get("categories", []) if isinstance(info.get("categories"), list) else []),
+                description=info.get("description", ""),
+                cover=cover,
+            )
             _cache_isbn_result(normalized_isbn, payload)
             return jsonify(payload)
 
@@ -320,7 +366,19 @@ def lookup_isbn(isbn):
             if cover.startswith("http://"):
                 cover = "https://" + cover[len("http://"):]
             print("Livre trouvé:", title)
-            payload = {"found": True, "isbn": normalized_isbn, "title": title, "authors": authors, "cover": cover}
+            payload = _build_payload(
+                normalized_isbn,
+                source="google_books_large",
+                title=title,
+                authors=authors,
+                publisher=info.get("publisher", ""),
+                published_date=info.get("publishedDate", ""),
+                page_count=info.get("pageCount", 0) if isinstance(info.get("pageCount"), int) else 0,
+                language=info.get("language", ""),
+                categories=_join_unique(info.get("categories", []) if isinstance(info.get("categories"), list) else []),
+                description=info.get("description", ""),
+                cover=cover,
+            )
             _cache_isbn_result(normalized_isbn, payload)
             return jsonify(payload)
 
@@ -345,7 +403,21 @@ def lookup_isbn(isbn):
             if not cover:
                 cover = f"https://covers.openlibrary.org/b/isbn/{urllib.parse.quote(normalized_isbn)}-L.jpg"
             print("Livre trouvé:", title)
-            payload = {"found": True, "isbn": normalized_isbn, "title": title, "authors": authors, "cover": cover}
+            payload = _build_payload(
+                normalized_isbn,
+                source="openlibrary_api_books",
+                title=title,
+                authors=authors,
+                publisher=_join_unique(
+                    [p.get("name", "") for p in entry.get("publishers", []) if isinstance(p, dict)]
+                ),
+                published_date=entry.get("publish_date", ""),
+                page_count=entry.get("number_of_pages", 0) if isinstance(entry.get("number_of_pages"), int) else 0,
+                categories=_join_unique(
+                    [s.get("name", "") for s in entry.get("subjects", []) if isinstance(s, dict)]
+                ),
+                cover=cover,
+            )
             _cache_isbn_result(normalized_isbn, payload)
             return jsonify(payload)
 
@@ -370,7 +442,18 @@ def lookup_isbn(isbn):
             authors = ", ".join(author_names)
         cover = f"https://covers.openlibrary.org/b/isbn/{urllib.parse.quote(normalized_isbn)}-L.jpg"
         print("Livre trouvé:", title)
-        payload = {"found": True, "isbn": normalized_isbn, "title": title, "authors": authors, "cover": cover}
+        payload = _build_payload(
+            normalized_isbn,
+            source="openlibrary_isbn",
+            title=title,
+            authors=authors,
+            published_date=open_isbn_data.get("publish_date", ""),
+            page_count=open_isbn_data.get("number_of_pages", 0)
+            if isinstance(open_isbn_data.get("number_of_pages"), int)
+            else 0,
+            publisher=_join_unique(open_isbn_data.get("publishers", [])) if isinstance(open_isbn_data.get("publishers"), list) else "",
+            cover=cover,
+        )
         _cache_isbn_result(normalized_isbn, payload)
         return jsonify(payload)
 
