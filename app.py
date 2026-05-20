@@ -100,6 +100,20 @@ def lookup_isbn(isbn):
             print("Livre trouvé:", title)
             return jsonify({"found": True, "isbn": normalized_isbn, "title": title, "authors": authors, "cover": cover})
 
+    google_fallback_url = f"https://www.googleapis.com/books/v1/volumes?q={urllib.parse.quote(normalized_isbn)}"
+    print("Google Books:", google_fallback_url)
+    google_fallback_data = _safe_get_json(google_fallback_url)
+    if isinstance(google_fallback_data, dict) and google_fallback_data.get("totalItems", 0) > 0 and google_fallback_data.get("items"):
+        info = google_fallback_data["items"][0].get("volumeInfo", {})
+        title = info.get("title")
+        if title:
+            authors = ", ".join(info.get("authors", []))
+            cover = info.get("imageLinks", {}).get("thumbnail") or info.get("imageLinks", {}).get("smallThumbnail") or ""
+            if cover.startswith("http://"):
+                cover = "https://" + cover[len("http://"):]
+            print("Livre trouvé:", title)
+            return jsonify({"found": True, "isbn": normalized_isbn, "title": title, "authors": authors, "cover": cover})
+
     open_books_url = (
         "https://openlibrary.org/api/books"
         f"?bibkeys=ISBN:{urllib.parse.quote(normalized_isbn)}&format=json&jscmd=data"

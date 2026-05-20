@@ -1,5 +1,7 @@
 const STORAGE_KEY = "elsaLibrary_EMPTY_MANUAL_v1";
+const ISBN_CACHE_KEY = "elsaIsbnCache_v1";
 let books = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+let isbnCache = JSON.parse(localStorage.getItem(ISBN_CACHE_KEY) || "{}");
 let statusFilter = "", sortBy = "recent", editIndex = null, tempCover = "";
 
 let scannerStream = null;
@@ -10,6 +12,7 @@ let zxingReader = null;
 let zxingControls = null;
 
 function save() { localStorage.setItem(STORAGE_KEY, JSON.stringify(books)); }
+function saveIsbnCache() { localStorage.setItem(ISBN_CACHE_KEY, JSON.stringify(isbnCache)); }
 function esc(s) { return (s || "").replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m])); }
 function stars(n) { return n ? "★".repeat(n) + "☆".repeat(5 - n) : "☆☆☆☆☆"; }
 function fakeCover(b) { return `<div class="fake-cover"><div class="fake-author">${esc(b.author || "Auteur")}</div><div class="fake-title">${esc(b.title || "Sans titre")}</div><div class="fake-mark">BIBLIOTHÈQUE D’ELSA</div></div>`; }
@@ -34,6 +37,7 @@ function openModal(i = null) {
   note.value = b.note || "";
   coverUrl.value = (b.cover && b.cover.startsWith("http")) ? b.cover : "";
   tempCover = b.cover || "";
+  if (typeof isbn !== "undefined") isbn.value = b.isbn || "";
   updatePreview();
   hideScannerPanel();
 }
@@ -68,6 +72,7 @@ function saveBook() {
   const b = {
     title: t.value.trim(), author: a.value.trim(), status: st.value,
     rating: +rt.value, note: note.value.trim(), cover: tempCover,
+    isbn: (typeof isbn !== "undefined" ? isbn.value.trim() : ""),
     added: editIndex === null ? Date.now() : books[editIndex].added
   };
   if (editIndex === null) books.unshift(b); else books[editIndex] = b;
@@ -156,6 +161,20 @@ function cleanIsbn(rawCode) {
 async function fetchBookByISBN(isbn) {
   showScannerStatus("Recherche du livre…");
   console.log("Recherche ISBN backend :", isbn);
+  if (typeof window.isbn !== "undefined") window.isbn.value = isbn;
+  showScannerStatus(`ISBN détecté : ${isbn}`);
+
+  const cached = isbnCache[isbn];
+  if (cached?.title) {
+    t.value = cached.title || "";
+    a.value = cached.authors || "";
+    coverUrl.value = cached.cover || "";
+    tempCover = cached.cover || "";
+    updatePreview();
+    console.log("Source utilisée :", "cache local");
+    showScannerStatus(`ISBN détecté : ${isbn} — Livre trouvé automatiquement`);
+    return true;
+  }
 
   try {
     const r = await fetch(`/api/isbn/${encodeURIComponent(isbn)}`);
@@ -168,16 +187,24 @@ async function fetchBookByISBN(isbn) {
       coverUrl.value = data.cover || "";
       tempCover = data.cover || "";
       updatePreview();
+      isbnCache[isbn] = {
+        isbn,
+        title: data.title || "",
+        authors: data.authors || "",
+        cover: data.cover || ""
+      };
+      saveIsbnCache();
+      console.log("Source utilisée :", "backend api");
       showScannerStatus("Livre trouvé automatiquement");
       return true;
     }
 
-    showScannerStatus("Livre non trouvé automatiquement. Vous pouvez le saisir manuellement.");
+    console.log("Source utilisée :", "aucune");
+    showScannerStatus(`ISBN détecté : ${isbn} — Livre non trouvé automatiquement. Vous pouvez compléter les informations manuellement.`);
     return false;
   } catch (e) {
     console.error(e);
-    showScannerStatus("Erreur réseau pendant la recherche.");
-    alert("Erreur de recherche du livre. Vérifie ta connexion puis réessaie.");
+    showScannerStatus(`ISBN détecté : ${isbn} — Recherche indisponible. Vous pouvez compléter les informations manuellement.`);
     return false;
   }
 }
