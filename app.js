@@ -1,5 +1,11 @@
 const STORAGE_KEY = "elsaLibrary_EMPTY_MANUAL_v1";
 const ISBN_CACHE_KEY = "elsaIsbnCache_v1";
+
+function hasMissingMetadata(book) {
+  if (!book || !book.title) return false;
+  const checks = ["cover", "publisher", "publishedDate", "pageCount", "language", "categories", "description"];
+  return checks.some(k => !book[k]);
+}
 let books = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
 let isbnCache = JSON.parse(localStorage.getItem(ISBN_CACHE_KEY) || "{}");
 let statusFilter = "", sortBy = "recent", editIndex = null, tempCover = "";
@@ -187,7 +193,7 @@ async function fetchBookByISBN(isbn) {
   showScannerStatus(`ISBN détecté : ${isbn}`);
 
   const cached = isbnCache[isbn];
-  if (cached?.title) {
+  if (cached?.title && !hasMissingMetadata(cached)) {
     t.value = cached.title || "";
     a.value = cached.authors || "";
     publisher.value = cached.publisher || "";
@@ -197,8 +203,9 @@ async function fetchBookByISBN(isbn) {
     categories.value = cached.categories || "";
     description.value = cached.description || "";
     images.value = Array.isArray(cached.images) ? cached.images.join(", ") : "";
-    coverUrl.value = cached.cover || "";
-    tempCover = cached.cover || (Array.isArray(cached.images) ? (cached.images[0] || "") : "");
+    const cachedCover = cached.cover || (Array.isArray(cached.images) ? (cached.images[0] || "") : "");
+    coverUrl.value = cachedCover;
+    tempCover = cachedCover;
     updatePreview();
     console.log("Source utilisée :", "cache local");
     showScannerStatus(`ISBN détecté : ${isbn} — Livre trouvé automatiquement`);
@@ -220,8 +227,9 @@ async function fetchBookByISBN(isbn) {
       categories.value = data.categories || "";
       description.value = data.description || "";
       images.value = Array.isArray(data.images) ? data.images.join(", ") : "";
-      coverUrl.value = data.cover || "";
-      tempCover = data.cover || (Array.isArray(data.images) ? (data.images[0] || "") : "");
+      const foundCover = data.cover || (Array.isArray(data.images) ? (data.images[0] || "") : "");
+      coverUrl.value = foundCover;
+      tempCover = foundCover;
       updatePreview();
       isbnCache[isbn] = {
         isbn,
