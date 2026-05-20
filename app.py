@@ -229,7 +229,7 @@ def _has_missing_enrichment_fields(payload: dict) -> bool:
         return False
     return any(
         not payload.get(field)
-        for field in ("cover", "publisher", "publishedDate", "pageCount", "language", "categories", "description")
+        for field in ("publisher", "publishedDate", "pageCount", "language", "categories", "description")
     )
 def _extract_google_volume_info(data: dict | None) -> dict:
     if not isinstance(data, dict) or data.get("totalItems", 0) <= 0 or not data.get("items"):
@@ -376,6 +376,11 @@ def enrich_book_data(isbn: str, base_book: dict) -> dict:
         enriched["cover"] = find_cover_for_isbn(isbn)
     if not enriched.get("images") and enriched.get("cover"):
         enriched["images"] = [enriched["cover"]]
+
+    if enriched.get("cover"):
+        print("Couverture trouvée:", enriched.get("cover"))
+    else:
+        print("Aucune couverture trouvée pour ISBN:", isbn)
 
     return enriched
 def _lookup_google_cover(isbn: str) -> str:
