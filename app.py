@@ -406,13 +406,13 @@ def _isbn13_to_isbn10(isbn13: str) -> str:
 
 
 def _is_valid_cover_url(url: str) -> bool:
-    req = urllib.request.Request(url, method="HEAD")
+    req = urllib.request.Request(url, method="GET")
+    req.add_header("Range", "bytes=0-0")
     try:
         with urllib.request.urlopen(req, timeout=8) as response:
-            status_ok = getattr(response, "status", 200) == 200
+            status = getattr(response, "status", 200)
             content_type = (response.headers.get("Content-Type") or "").lower()
-            content_len = int(response.headers.get("Content-Length") or "0")
-            return status_ok and content_type.startswith("image/") and content_len > 1000
+            return status in (200, 206) and content_type.startswith("image/")
     except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError, ValueError):
         return False
 
@@ -422,10 +422,26 @@ def find_cover_for_isbn(isbn: str) -> str:
     if google_cover:
         return google_cover
 
-    candidates = [f"https://covers.openlibrary.org/b/isbn/{urllib.parse.quote(isbn)}-L.jpg"]
+    open_books_url = (
+        "https://openlibrary.org/api/books"
+        f"?bibkeys=ISBN:{urllib.parse.quote(isbn)}&format=json&jscmd=data"
+    )
+    data = _safe_get_json(open_books_url)
+    if isinstance(data, dict):
+        entry = data.get(f"ISBN:{isbn}")
+        if isinstance(entry, dict) and isinstance(entry.get("cover"), dict):
+            for key in ("large", "medium", "small"):
+                url = entry["cover"].get(key, "")
+                if isinstance(url, str) and url.strip() and _is_valid_cover_url(url):
+                    return url
+
+    candidates: list[str] = []
+    for size in ("L", "M", "S"):
+        candidates.append(f"https://covers.openlibrary.org/b/isbn/{urllib.parse.quote(isbn)}-{size}.jpg")
     isbn10 = _isbn13_to_isbn10(isbn)
     if isbn10:
-        candidates.append(f"https://covers.openlibrary.org/b/isbn/{urllib.parse.quote(isbn10)}-L.jpg")
+        for size in ("L", "M", "S"):
+            candidates.append(f"https://covers.openlibrary.org/b/isbn/{urllib.parse.quote(isbn10)}-{size}.jpg")
 
     for url in candidates:
         if _is_valid_cover_url(url):
