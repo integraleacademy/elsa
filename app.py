@@ -129,6 +129,27 @@ def _join_unique(values: list[str]) -> str:
     return ", ".join(result)
 
 
+def _join_unique_authors(values: list[str]) -> str:
+    unique_authors = [author for author in _join_unique(values).split(", ") if author]
+    if not unique_authors:
+        return ""
+
+    normalized_last_names = {
+        _normalize_text_key(author.split()[-1])
+        for author in unique_authors
+        if len(author.split()) >= 2
+    }
+
+    filtered_authors: list[str] = []
+    for author in unique_authors:
+        parts = author.split()
+        normalized_author = _normalize_text_key(author)
+        if len(parts) == 1 and normalized_author in normalized_last_names:
+            continue
+        filtered_authors.append(author)
+    return ", ".join(filtered_authors)
+
+
 def _build_payload(
     isbn: str,
     *,
@@ -480,7 +501,7 @@ def lookup_bnf_isbn(isbn: str) -> dict | None:
                 elif code == "d" and text and not date:
                     date = text
 
-    authors_text = _join_unique(authors)
+    authors_text = _join_unique_authors(authors)
     if title and authors_text:
         cover_url = find_cover_for_isbn(isbn)
         return _build_payload(

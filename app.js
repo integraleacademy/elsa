@@ -21,6 +21,11 @@ function save() { localStorage.setItem(STORAGE_KEY, JSON.stringify(books)); }
 function saveIsbnCache() { localStorage.setItem(ISBN_CACHE_KEY, JSON.stringify(isbnCache)); }
 function esc(s) { return (s || "").replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m])); }
 function stars(n) { return n ? "★".repeat(n) + "☆".repeat(5 - n) : "☆☆☆☆☆"; }
+function ratingButtons(rating, index) {
+  return `<div class="stars" role="group" aria-label="Noter le livre">${[1, 2, 3, 4, 5].map(n =>
+    `<button type="button" class="star-btn${n <= (rating || 0) ? " on" : ""}" data-rate-index="${index}" data-rate-value="${n}" aria-label="Donner ${n} étoile${n > 1 ? "s" : ""}">★</button>`
+  ).join("")}</div>`;
+}
 function fakeCover(b) { return `<div class="fake-cover"><div class="fake-author">${esc(b.author || "Auteur")}</div><div class="fake-title">${esc(b.title || "Sans titre")}</div><div class="fake-mark">BIBLIOTHÈQUE D’ELSA</div></div>`; }
 
 function applyTheme() {
@@ -100,6 +105,13 @@ function saveBook() {
 }
 
 function deleteBook(i) { if (confirm("Supprimer ce livre ?")) { books.splice(i, 1); save(); render(); } }
+
+function rateBook(index, rating) {
+  if (typeof books[index] === "undefined") return;
+  books[index].rating = rating;
+  save();
+  render();
+}
 function syncActiveFilters() {
   document.querySelectorAll(".tabs button[data-status], .mobile-nav button[data-status]").forEach(btn => {
     const isActive = (btn.dataset.status || "") === statusFilter;
@@ -108,6 +120,13 @@ function syncActiveFilters() {
 }
 
 function setStatus(s) { statusFilter = s; render(); }
+
+function updateBookStatus(index, status) {
+  if (typeof books[index] === "undefined") return;
+  books[index].status = status;
+  save();
+  render();
+}
 function toggleAuthor() { if (typeof authorPanel !== "undefined") authorPanel.style.display = authorPanel.style.display === "none" ? "block" : "none"; }
 
 function setAuthorSearch(v) {
@@ -132,7 +151,7 @@ function render() {
 
   grid.innerHTML = arr.length ? arr.map(b => `
     <article class="book"><div class="cover">${fakeCover(b)}${b.cover ? `<img src="${esc(b.cover)}" onerror="this.remove()">` : ""}</div>
-    <div class="info"><div class="title">${esc(b.title)}</div><div class="author">${esc(b.author)}</div>${b.isbn ? `<div class="isbn">ISBN : ${esc(b.isbn)}</div>` : ""}${b.publisher ? `<div class="isbn">Éditeur : ${esc(b.publisher)}</div>` : ""}${b.publishedDate ? `<div class="isbn">Date : ${esc(b.publishedDate)}</div>` : ""}${b.pages ? `<div class="isbn">Pages : ${esc(String(b.pages))}</div>` : ""}<div class="stars">${stars(b.rating)}</div>
+    <div class="info"><div class="title">${esc(b.title)}</div><div class="author">${esc(b.author)}</div>${b.isbn ? `<div class="isbn">ISBN : ${esc(b.isbn)}</div>` : ""}${b.publisher ? `<div class="isbn">Éditeur : ${esc(b.publisher)}</div>` : ""}${b.publishedDate ? `<div class="isbn">Date : ${esc(b.publishedDate)}</div>` : ""}${b.pages ? `<div class="isbn">Pages : ${esc(String(b.pages))}</div>` : ""}${ratingButtons(b.rating, b._i)}
     <span class="badge">${esc(b.status)}</span><div class="cardBtns"><button onclick="openModal(${b._i})">Modifier</button><button onclick="deleteBook(${b._i})">Supprimer</button></div></div></article>
   `).join("") : `<div class="empty">Aucun livre pour le moment.<br><br>Clique sur “+ Ajouter” pour commencer ta bibliothèque 📚</div>`;
   update();
@@ -293,6 +312,28 @@ async function handleManualIsbnSearch() {
   await fetchBookByISBN(isbn);
 }
 
+
+function cameraTroubleshootingMessage(err) {
+  const name = err?.name || "";
+  const iosHint = (/iPhone|iPad|iPod/i.test(navigator.userAgent))
+    ? "Sur iPhone/iPad, ouvrez le site directement dans Safari (pas dans un navigateur intégré) puis autorisez Caméra dans aA > Réglages du site web > Caméra."
+    : "";
+
+  if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+    return "Accès caméra refusé. Autorise la caméra pour ce site puis relance le scan.";
+  }
+  if (name === "NotReadableError" || name === "TrackStartError") {
+    return "Caméra occupée par une autre app. Ferme les autres apps utilisant la caméra puis réessaie.";
+  }
+  if (name === "OverconstrainedError" || name === "ConstraintNotSatisfiedError") {
+    return "Caméra arrière indisponible. Réessaie après rotation du téléphone ou redémarrage du navigateur.";
+  }
+  if (name === "AbortError") {
+    return "Démarrage caméra interrompu. Réessaie dans quelques secondes.";
+  }
+  return (`Impossible de démarrer la caméra sur ce téléphone. ${iosHint}`).trim();
+}
+
 async function startScanner() {
   stopScanner();
   const panel = document.getElementById("scannerPanel");
@@ -366,14 +407,9 @@ async function startScanner() {
   } catch (e) {
     console.error(e);
     stopScanner();
-    const denied = e?.name === "NotAllowedError" || e?.name === "PermissionDeniedError";
-    if (denied) {
-      showScannerStatus("Accès caméra refusé.");
-      alert("Accès caméra refusé. Autorise la caméra pour scanner un ISBN.");
-    } else {
-      showScannerStatus("Impossible de démarrer la caméra.");
-      alert("Impossible de démarrer la caméra sur ce téléphone. Vérifie Safari > Réglages de site web > Caméra puis réessaie.");
-    }
+    const msg = cameraTroubleshootingMessage(e);
+    showScannerStatus(msg);
+    alert(msg);
   }
 }
 
@@ -410,3 +446,13 @@ document.getElementById("stopScanBtn")?.addEventListener("click", () => {
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 applyTheme();
 render();
+
+
+grid.addEventListener("click", (event) => {
+  const btn = event.target.closest(".star-btn");
+  if (!btn) return;
+  const index = Number(btn.dataset.rateIndex);
+  const rating = Number(btn.dataset.rateValue);
+  if (!Number.isInteger(index) || !Number.isInteger(rating)) return;
+  rateBook(index, rating);
+});
