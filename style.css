@@ -7,3 +7,5 @@
 #scannerVideo{width:100%;height:100%;object-fit:cover}
 .scanner-status{margin:10px 0 8px;color:var(--muted);font-weight:700}
 .scanner-stop{width:100%}
+
+.isbn{font-size:11px;margin-top:5px;color:var(--muted)}
