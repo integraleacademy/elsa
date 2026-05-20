@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import urllib.error
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
@@ -130,6 +131,89 @@ def _cache_isbn_result(isbn: str, payload: dict) -> None:
     _write_isbn_cache(cache)
 
 
+def _lookup_google_cover(isbn: str) -> str:
+    urls = [
+        f"https://www.googleapis.com/books/v1/volumes?q=isbn:{urllib.parse.quote(isbn)}",
+        f"https://www.googleapis.com/books/v1/volumes?q={urllib.parse.quote(isbn)}",
+    ]
+    for url in urls:
+        try:
+            data = _safe_get_json(url)
+        except urllib.error.HTTPError:
+            continue
+        if not isinstance(data, dict) or not data.get("items"):
+            continue
+        info = data["items"][0].get("volumeInfo", {})
+        cover = info.get("imageLinks", {}).get("thumbnail") or info.get("imageLinks", {}).get("smallThumbnail") or ""
+        if cover.startswith("http://"):
+            cover = "https://" + cover[len("http://"):]
+        if cover:
+            return cover
+    return ""
+
+
+def lookup_bnf_isbn(isbn: str) -> dict | None:
+    url = (
+        "https://catalogue.bnf.fr/api/SRU?version=1.2&operation=searchRetrieve"
+        f"&query=bib.isbn%20all%20%22{urllib.parse.quote(isbn)}%22"
+        "&recordSchema=unimarcxchange&maximumRecords=1"
+    )
+    try:
+        with urllib.request.urlopen(url, timeout=8) as response:
+            xml_text = response.read().decode("utf-8", errors="replace")
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError) as err:
+        print("Erreur BnF:", err)
+        return None
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError as err:
+        print("XML BnF invalide:", err)
+        return None
+
+    title = ""
+    authors: list[str] = []
+    publisher = ""
+    date = ""
+    datafields = root.findall(".//{*}datafield")
+    for field in datafields:
+        tag = field.attrib.get("tag", "")
+        subfields = field.findall("{*}subfield")
+        if tag == "200":
+            for sf in subfields:
+                code = sf.attrib.get("code")
+                text = (sf.text or "").strip()
+                if code == "a" and text and not title:
+                    title = text
+                elif code == "f" and text:
+                    authors.append(text)
+        elif tag == "700":
+            for sf in subfields:
+                if sf.attrib.get("code") == "a" and (sf.text or "").strip():
+                    authors.append((sf.text or "").strip())
+        elif tag == "210":
+            for sf in subfields:
+                code = sf.attrib.get("code")
+                text = (sf.text or "").strip()
+                if code == "c" and text and not publisher:
+                    publisher = text
+                elif code == "d" and text and not date:
+                    date = text
+
+    authors_text = ", ".join(dict.fromkeys(a for a in authors if a))
+    if title and authors_text:
+        return {
+            "found": True,
+            "source": "bnf",
+            "isbn": isbn,
+            "title": title,
+            "authors": authors_text,
+            "publisher": publisher,
+            "date": date,
+            "cover": "",
+        }
+    return None
+
+
 @app.get("/api/isbn/<isbn>")
 def lookup_isbn(isbn):
     normalized_isbn = _normalize_isbn(isbn)
@@ -138,15 +222,19 @@ def lookup_isbn(isbn):
     if not normalized_isbn:
         return jsonify({"found": False, "isbn": isbn, "error": "Livre non trouvé"})
 
-    known = KNOWN_ISBN.get(normalized_isbn)
-    if known:
-        return jsonify(known)
-
     cache = _read_isbn_cache()
     cached = cache.get(normalized_isbn)
     if isinstance(cached, dict):
         print("ISBN trouvé dans cache serveur:", normalized_isbn)
         return jsonify(cached)
+
+    bnf_data = lookup_bnf_isbn(normalized_isbn)
+    if bnf_data:
+        print("Source utilisée : BnF")
+        if not bnf_data.get("cover"):
+            bnf_data["cover"] = _lookup_google_cover(normalized_isbn)
+        _cache_isbn_result(normalized_isbn, bnf_data)
+        return jsonify(bnf_data)
 
     google_url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{urllib.parse.quote(normalized_isbn)}"
     print("Google Books (strict):", google_url)
