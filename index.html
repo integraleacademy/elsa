@@ -20,14 +20,14 @@
     </aside>
     <main>
       <div class="top"><div><h1>Ma bibliothèque 📖</h1><div class="count"><span id="count">0</span> livres au total</div></div><div class="searchbar"><input id="search" placeholder="Rechercher un livre, un auteur..." oninput="render()"><button class="soft" onclick="openScannerModal()">📷 ISBN</button><button class="add" onclick="openModal()">+ Ajouter</button></div></div>
-      <div class="tabs"><button onclick="setStatus('')">Tous</button><button onclick="setStatus('À lire')">À lire</button><button onclick="setStatus('En cours')">En cours</button><button onclick="setStatus('Lu')">Terminés</button><button onclick="setStatus('Wishlist')">Wishlist</button></div>
+      <div class="tabs"><button data-status="" onclick="setStatus('')">Tous</button><button data-status="À lire" onclick="setStatus('À lire')">À lire</button><button data-status="En cours" onclick="setStatus('En cours')">En cours</button><button data-status="Lu" onclick="setStatus('Lu')">Terminés</button><button data-status="Wishlist" onclick="setStatus('Wishlist')">Wishlist</button></div>
       <div class="mobile-filter"><input id="mobileAuthorSearch" placeholder="Filtrer par auteur..." oninput="setAuthorSearch(this.value)"><select onchange="sortBy=this.value;render()"><option value="recent">Plus récent</option><option value="title">Titre</option><option value="author">Auteur</option><option value="rating">Note</option></select></div>
       <input type="hidden" id="authorFilter" value=""><section id="grid" class="grid"></section>
       <section class="stats"><div class="stat"><b id="sTotal">0</b><span>Total</span></div><div class="stat"><b id="sCourse">0</b><span>En cours</span></div><div class="stat"><b id="sRead">0</b><span>Terminés</span></div><div class="stat"><b id="sWish">0</b><span>Wishlist</span></div><div class="stat"><b id="sAuthors">0</b><span>Auteurs</span></div></section>
     </main>
   </div>
 
-  <nav class="mobile-nav"><button onclick="setStatus('')"><span>🏠</span>Accueil</button><button onclick="setStatus('À lire')"><span>📌</span>À lire</button><button onclick="setStatus('En cours')"><span>⏳</span>En cours</button><button onclick="setStatus('Lu')"><span>✅</span>Lus</button><button onclick="toggleTheme()"><span>🌙</span>Mode</button></nav>
+  <nav class="mobile-nav"><button data-status="" onclick="setStatus('')"><span>🏠</span>Accueil</button><button data-status="À lire" onclick="setStatus('À lire')"><span>📌</span>À lire</button><button data-status="En cours" onclick="setStatus('En cours')"><span>⏳</span>En cours</button><button data-status="Lu" onclick="setStatus('Lu')"><span>✅</span>Lus</button><button onclick="toggleTheme()"><span>🌙</span>Mode</button></nav>
 
   <div class="modal" id="modal">
     <div class="box">
