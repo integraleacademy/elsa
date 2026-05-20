@@ -201,13 +201,44 @@ def _cache_isbn_result(isbn: str, payload: dict) -> None:
     _write_isbn_cache(cache)
 
 
+
+
+def _has_missing_enrichment_fields(payload: dict) -> bool:
+    if not isinstance(payload, dict) or not payload.get("found"):
+        return False
+    return any(
+        not payload.get(field)
+        for field in ("cover", "publisher", "publishedDate", "pageCount", "language", "categories", "description")
+    )
 def _extract_google_volume_info(data: dict | None) -> dict:
     if not isinstance(data, dict) or data.get("totalItems", 0) <= 0 or not data.get("items"):
         return {}
-    info = data["items"][0].get("volumeInfo", {})
-    if not isinstance(info, dict):
-        return {}
-    return info
+
+    def score(info: dict) -> int:
+        pts = 0
+        if not isinstance(info, dict):
+            return -1
+        if info.get("description"):
+            pts += 3
+        if isinstance(info.get("pageCount"), int) and info.get("pageCount", 0) > 0:
+            pts += 3
+        if info.get("publisher"):
+            pts += 1
+        if info.get("categories"):
+            pts += 1
+        if info.get("imageLinks"):
+            pts += 1
+        return pts
+
+    best: dict = {}
+    best_score = -1
+    for item in data.get("items", []):
+        info = item.get("volumeInfo", {}) if isinstance(item, dict) else {}
+        s = score(info)
+        if s > best_score:
+            best = info if isinstance(info, dict) else {}
+            best_score = s
+    return best if isinstance(best, dict) else {}
 
 
 def _enrich_with_google(isbn: str, payload: dict) -> dict:
@@ -233,6 +264,99 @@ def _enrich_with_google(isbn: str, payload: dict) -> dict:
     }
 
 
+
+
+def _enrich_with_openlibrary(isbn: str, payload: dict) -> dict:
+    url = (
+        "https://openlibrary.org/api/books"
+        f"?bibkeys=ISBN:{urllib.parse.quote(isbn)}&format=json&jscmd=data"
+    )
+    data = _safe_get_json(url)
+    if not isinstance(data, dict):
+        return payload
+
+    entry = data.get(f"ISBN:{isbn}")
+    if not isinstance(entry, dict):
+        return payload
+
+    cover = ""
+    images: list[str] = []
+    if isinstance(entry.get("cover"), dict):
+        cover = entry["cover"].get("large") or entry["cover"].get("medium") or entry["cover"].get("small") or ""
+        images = [u for u in [entry["cover"].get("large", ""), entry["cover"].get("medium", ""), entry["cover"].get("small", "")] if u]
+
+    publishers = _join_unique([p.get("name", "") for p in entry.get("publishers", []) if isinstance(p, dict)])
+    categories = _join_unique([s.get("name", "") for s in entry.get("subjects", []) if isinstance(s, dict)])
+
+    return {
+        **payload,
+        "publisher": payload.get("publisher") or publishers,
+        "publishedDate": payload.get("publishedDate") or entry.get("publish_date", ""),
+        "pageCount": payload.get("pageCount") or (entry.get("number_of_pages", 0) if isinstance(entry.get("number_of_pages"), int) else 0),
+        "categories": payload.get("categories") or categories,
+        "cover": payload.get("cover") or cover,
+        "images": payload.get("images") or images,
+        "source": payload.get("source", "") + "+openlibrary_enrich",
+    }
+
+
+
+
+def _enrich_openlibrary_details(isbn: str, payload: dict) -> dict:
+    url = f"https://openlibrary.org/isbn/{urllib.parse.quote(isbn)}.json"
+    data = _safe_get_json(url)
+    if not isinstance(data, dict):
+        return payload
+
+    page_count = data.get("number_of_pages", 0) if isinstance(data.get("number_of_pages"), int) else 0
+    description = ""
+
+    work_key = ""
+    works = data.get("works", [])
+    if isinstance(works, list):
+        for work in works:
+            if isinstance(work, dict) and isinstance(work.get("key"), str):
+                work_key = work["key"]
+                break
+
+    if work_key:
+        work_data = _safe_get_json(f"https://openlibrary.org{work_key}.json")
+        if isinstance(work_data, dict):
+            raw_desc = work_data.get("description", "")
+            if isinstance(raw_desc, str):
+                description = raw_desc
+            elif isinstance(raw_desc, dict):
+                description = raw_desc.get("value", "") if isinstance(raw_desc.get("value"), str) else ""
+
+    return {
+        **payload,
+        "pageCount": payload.get("pageCount") or page_count,
+        "description": payload.get("description") or description,
+        "source": payload.get("source", "") + "+openlibrary_details",
+    }
+def enrich_book_data(isbn: str, base_book: dict) -> dict:
+    enriched = dict(base_book)
+    enriched = _enrich_with_google(isbn, enriched)
+
+    missing_fields = [
+        not enriched.get("cover"),
+        not enriched.get("publisher"),
+        not enriched.get("publishedDate"),
+        not enriched.get("pageCount"),
+        not enriched.get("language"),
+        not enriched.get("categories"),
+        not enriched.get("description"),
+    ]
+    if any(missing_fields):
+        enriched = _enrich_with_openlibrary(isbn, enriched)
+        enriched = _enrich_openlibrary_details(isbn, enriched)
+
+    if not enriched.get("cover"):
+        enriched["cover"] = find_cover_for_isbn(isbn)
+    if not enriched.get("images") and enriched.get("cover"):
+        enriched["images"] = [enriched["cover"]]
+
+    return enriched
 def _lookup_google_cover(isbn: str) -> str:
     url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{urllib.parse.quote(isbn)}"
     try:
@@ -261,13 +385,13 @@ def _isbn13_to_isbn10(isbn13: str) -> str:
 
 
 def _is_valid_cover_url(url: str) -> bool:
-    req = urllib.request.Request(url, method="HEAD")
+    req = urllib.request.Request(url, method="GET")
+    req.add_header("Range", "bytes=0-0")
     try:
         with urllib.request.urlopen(req, timeout=8) as response:
-            status_ok = getattr(response, "status", 200) == 200
+            status = getattr(response, "status", 200)
             content_type = (response.headers.get("Content-Type") or "").lower()
-            content_len = int(response.headers.get("Content-Length") or "0")
-            return status_ok and content_type.startswith("image/") and content_len > 1000
+            return status in (200, 206) and content_type.startswith("image/")
     except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError, ValueError):
         return False
 
@@ -277,10 +401,26 @@ def find_cover_for_isbn(isbn: str) -> str:
     if google_cover:
         return google_cover
 
-    candidates = [f"https://covers.openlibrary.org/b/isbn/{urllib.parse.quote(isbn)}-L.jpg"]
+    open_books_url = (
+        "https://openlibrary.org/api/books"
+        f"?bibkeys=ISBN:{urllib.parse.quote(isbn)}&format=json&jscmd=data"
+    )
+    data = _safe_get_json(open_books_url)
+    if isinstance(data, dict):
+        entry = data.get(f"ISBN:{isbn}")
+        if isinstance(entry, dict) and isinstance(entry.get("cover"), dict):
+            for key in ("large", "medium", "small"):
+                url = entry["cover"].get(key, "")
+                if isinstance(url, str) and url.strip() and _is_valid_cover_url(url):
+                    return url
+
+    candidates: list[str] = []
+    for size in ("L", "M", "S"):
+        candidates.append(f"https://covers.openlibrary.org/b/isbn/{urllib.parse.quote(isbn)}-{size}.jpg")
     isbn10 = _isbn13_to_isbn10(isbn)
     if isbn10:
-        candidates.append(f"https://covers.openlibrary.org/b/isbn/{urllib.parse.quote(isbn10)}-L.jpg")
+        for size in ("L", "M", "S"):
+            candidates.append(f"https://covers.openlibrary.org/b/isbn/{urllib.parse.quote(isbn10)}-{size}.jpg")
 
     for url in candidates:
         if _is_valid_cover_url(url):
@@ -362,13 +502,18 @@ def lookup_isbn(isbn):
     cache = _read_isbn_cache()
     cached = cache.get(normalized_isbn)
     if isinstance(cached, dict):
+        if _has_missing_enrichment_fields(cached):
+            print("Cache serveur incomplet, tentative de réenrichissement:", normalized_isbn)
+            refreshed = enrich_book_data(normalized_isbn, cached)
+            _cache_isbn_result(normalized_isbn, refreshed)
+            return jsonify(refreshed)
         print("ISBN trouvé dans cache serveur:", normalized_isbn)
         return jsonify(cached)
 
     bnf_data = lookup_bnf_isbn(normalized_isbn)
     if bnf_data:
         print("Source utilisée : BnF")
-        enriched_bnf = _enrich_with_google(normalized_isbn, bnf_data)
+        enriched_bnf = enrich_book_data(normalized_isbn, bnf_data)
         _cache_isbn_result(normalized_isbn, enriched_bnf)
         return jsonify(enriched_bnf)
 
