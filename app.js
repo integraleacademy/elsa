@@ -38,6 +38,7 @@ function openModal(i = null) {
   language.value = b.language || "";
   categories.value = b.categories || "";
   description.value = b.description || "";
+  images.value = Array.isArray(b.images) ? b.images.join(", ") : (b.images || "");
   st.value = b.status || "À lire";
   rt.value = b.rating || 0;
   note.value = b.note || "";
@@ -85,6 +86,7 @@ function saveBook() {
     language: language.value.trim(),
     categories: categories.value.trim(),
     description: description.value.trim(),
+    images: images.value.split(",").map(v => v.trim()).filter(Boolean),
     added: editIndex === null ? Date.now() : books[editIndex].added
   };
   if (editIndex === null) books.unshift(b); else books[editIndex] = b;
@@ -186,8 +188,9 @@ async function fetchBookByISBN(isbn) {
     language.value = cached.language || "";
     categories.value = cached.categories || "";
     description.value = cached.description || "";
+    images.value = Array.isArray(cached.images) ? cached.images.join(", ") : "";
     coverUrl.value = cached.cover || "";
-    tempCover = cached.cover || "";
+    tempCover = cached.cover || (Array.isArray(cached.images) ? (cached.images[0] || "") : "");
     updatePreview();
     console.log("Source utilisée :", "cache local");
     showScannerStatus(`ISBN détecté : ${isbn} — Livre trouvé automatiquement`);
@@ -208,8 +211,9 @@ async function fetchBookByISBN(isbn) {
       language.value = data.language || "";
       categories.value = data.categories || "";
       description.value = data.description || "";
+      images.value = Array.isArray(data.images) ? data.images.join(", ") : "";
       coverUrl.value = data.cover || "";
-      tempCover = data.cover || "";
+      tempCover = data.cover || (Array.isArray(data.images) ? (data.images[0] || "") : "");
       updatePreview();
       isbnCache[isbn] = {
         isbn,
@@ -222,6 +226,8 @@ async function fetchBookByISBN(isbn) {
         language: data.language || "",
         categories: data.categories || "",
         description: data.description || ""
+        ,
+        images: Array.isArray(data.images) ? data.images : []
       };
       saveIsbnCache();
       console.log("Source utilisée :", "backend api");
