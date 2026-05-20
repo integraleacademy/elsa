@@ -234,10 +234,32 @@ def _has_missing_enrichment_fields(payload: dict) -> bool:
 def _extract_google_volume_info(data: dict | None) -> dict:
     if not isinstance(data, dict) or data.get("totalItems", 0) <= 0 or not data.get("items"):
         return {}
-    info = data["items"][0].get("volumeInfo", {})
-    if not isinstance(info, dict):
-        return {}
-    return info
+
+    def score(info: dict) -> int:
+        pts = 0
+        if not isinstance(info, dict):
+            return -1
+        if info.get("description"):
+            pts += 3
+        if isinstance(info.get("pageCount"), int) and info.get("pageCount", 0) > 0:
+            pts += 3
+        if info.get("publisher"):
+            pts += 1
+        if info.get("categories"):
+            pts += 1
+        if info.get("imageLinks"):
+            pts += 1
+        return pts
+
+    best: dict = {}
+    best_score = -1
+    for item in data.get("items", []):
+        info = item.get("volumeInfo", {}) if isinstance(item, dict) else {}
+        s = score(info)
+        if s > best_score:
+            best = info if isinstance(info, dict) else {}
+            best_score = s
+    return best if isinstance(best, dict) else {}
 
 
 def _enrich_with_google(isbn: str, payload: dict) -> dict:
@@ -299,6 +321,40 @@ def _enrich_with_openlibrary(isbn: str, payload: dict) -> dict:
     }
 
 
+
+
+def _enrich_openlibrary_details(isbn: str, payload: dict) -> dict:
+    url = f"https://openlibrary.org/isbn/{urllib.parse.quote(isbn)}.json"
+    data = _safe_get_json(url)
+    if not isinstance(data, dict):
+        return payload
+
+    page_count = data.get("number_of_pages", 0) if isinstance(data.get("number_of_pages"), int) else 0
+    description = ""
+
+    work_key = ""
+    works = data.get("works", [])
+    if isinstance(works, list):
+        for work in works:
+            if isinstance(work, dict) and isinstance(work.get("key"), str):
+                work_key = work["key"]
+                break
+
+    if work_key:
+        work_data = _safe_get_json(f"https://openlibrary.org{work_key}.json")
+        if isinstance(work_data, dict):
+            raw_desc = work_data.get("description", "")
+            if isinstance(raw_desc, str):
+                description = raw_desc
+            elif isinstance(raw_desc, dict):
+                description = raw_desc.get("value", "") if isinstance(raw_desc.get("value"), str) else ""
+
+    return {
+        **payload,
+        "pageCount": payload.get("pageCount") or page_count,
+        "description": payload.get("description") or description,
+        "source": payload.get("source", "") + "+openlibrary_details",
+    }
 def enrich_book_data(isbn: str, base_book: dict) -> dict:
     enriched = dict(base_book)
     enriched = _enrich_with_google(isbn, enriched)
@@ -314,6 +370,7 @@ def enrich_book_data(isbn: str, base_book: dict) -> dict:
     ]
     if any(missing_fields):
         enriched = _enrich_with_openlibrary(isbn, enriched)
+        enriched = _enrich_openlibrary_details(isbn, enriched)
 
     if not enriched.get("cover"):
         enriched["cover"] = find_cover_for_isbn(isbn)
