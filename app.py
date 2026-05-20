@@ -222,6 +222,15 @@ def _cache_isbn_result(isbn: str, payload: dict) -> None:
     _write_isbn_cache(cache)
 
 
+
+
+def _has_missing_enrichment_fields(payload: dict) -> bool:
+    if not isinstance(payload, dict) or not payload.get("found"):
+        return False
+    return any(
+        not payload.get(field)
+        for field in ("cover", "publisher", "publishedDate", "pageCount", "language", "categories", "description")
+    )
 def _extract_google_volume_info(data: dict | None) -> dict:
     if not isinstance(data, dict) or data.get("totalItems", 0) <= 0 or not data.get("items"):
         return {}
@@ -441,6 +450,11 @@ def lookup_isbn(isbn):
     cache = _read_isbn_cache()
     cached = cache.get(normalized_isbn)
     if isinstance(cached, dict):
+        if _has_missing_enrichment_fields(cached):
+            print("Cache serveur incomplet, tentative de réenrichissement:", normalized_isbn)
+            refreshed = enrich_book_data(normalized_isbn, cached)
+            _cache_isbn_result(normalized_isbn, refreshed)
+            return jsonify(refreshed)
         print("ISBN trouvé dans cache serveur:", normalized_isbn)
         return jsonify(cached)
 

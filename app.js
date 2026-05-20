@@ -1,5 +1,11 @@
 const STORAGE_KEY = "elsaLibrary_EMPTY_MANUAL_v1";
 const ISBN_CACHE_KEY = "elsaIsbnCache_v1";
+
+function hasMissingMetadata(book) {
+  if (!book || !book.title) return false;
+  const checks = ["cover", "publisher", "publishedDate", "pageCount", "language", "categories", "description"];
+  return checks.some(k => !book[k]);
+}
 let books = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
 let isbnCache = JSON.parse(localStorage.getItem(ISBN_CACHE_KEY) || "{}");
 let statusFilter = "", sortBy = "recent", editIndex = null, tempCover = "";
@@ -199,7 +205,7 @@ async function fetchBookByISBN(isbn) {
   showScannerStatus(`ISBN détecté : ${isbn}`);
 
   const cached = isbnCache[isbn];
-  if (cached?.title) {
+  if (cached?.title && !hasMissingMetadata(cached)) {
     t.value = cached.title || "";
     a.value = cached.authors || "";
     publisher.value = cached.publisher || "";
