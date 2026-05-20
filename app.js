@@ -197,8 +197,9 @@ async function fetchBookByISBN(isbn) {
     categories.value = cached.categories || "";
     description.value = cached.description || "";
     images.value = Array.isArray(cached.images) ? cached.images.join(", ") : "";
-    coverUrl.value = cached.cover || "";
-    tempCover = cached.cover || (Array.isArray(cached.images) ? (cached.images[0] || "") : "");
+    const cachedCover = cached.cover || (Array.isArray(cached.images) ? (cached.images[0] || "") : "");
+    coverUrl.value = cachedCover;
+    tempCover = cachedCover;
     updatePreview();
     console.log("Source utilisée :", "cache local");
     showScannerStatus(`ISBN détecté : ${isbn} — Livre trouvé automatiquement`);
@@ -220,8 +221,9 @@ async function fetchBookByISBN(isbn) {
       categories.value = data.categories || "";
       description.value = data.description || "";
       images.value = Array.isArray(data.images) ? data.images.join(", ") : "";
-      coverUrl.value = data.cover || "";
-      tempCover = data.cover || (Array.isArray(data.images) ? (data.images[0] || "") : "");
+      const foundCover = data.cover || (Array.isArray(data.images) ? (data.images[0] || "") : "");
+      coverUrl.value = foundCover;
+      tempCover = foundCover;
       updatePreview();
       isbnCache[isbn] = {
         isbn,
