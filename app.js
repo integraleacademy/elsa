@@ -249,6 +249,19 @@ async function handleDetectedCode(raw) {
   await fetchBookByISBN(isbn);
 }
 
+async function handleManualIsbnSearch() {
+  const rawCode = document.getElementById("manualIsbnInput")?.value || "";
+  console.log("ISBN scanné brut :", rawCode);
+  const isbn = cleanIsbn(rawCode);
+  console.log("ISBN normalisé :", isbn);
+  if (!isbn) {
+    showScannerStatus("Veuillez saisir un ISBN valide.");
+    return;
+  }
+  showScannerStatus(`Code détecté : ${isbn}`);
+  await fetchBookByISBN(isbn);
+}
+
 async function startScanner() {
   stopScanner();
   const panel = document.getElementById("scannerPanel");
@@ -351,6 +364,13 @@ function stopScanner() {
 }
 
 document.getElementById("scanIsbnBtn")?.addEventListener("click", startScanner);
+document.getElementById("manualIsbnSearchBtn")?.addEventListener("click", handleManualIsbnSearch);
+document.getElementById("manualIsbnInput")?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    handleManualIsbnSearch();
+  }
+});
 document.getElementById("stopScanBtn")?.addEventListener("click", () => {
   stopScanner();
   showScannerStatus("Scan arrêté.");
