@@ -1,5 +1,7 @@
 const STORAGE_KEY = "elsaLibrary_EMPTY_MANUAL_v1";
+const ISBN_CACHE_KEY = "elsaIsbnCache_v1";
 let books = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+let isbnCache = JSON.parse(localStorage.getItem(ISBN_CACHE_KEY) || "{}");
 let statusFilter = "", sortBy = "recent", editIndex = null, tempCover = "";
 
 let scannerStream = null;
@@ -10,6 +12,7 @@ let zxingReader = null;
 let zxingControls = null;
 
 function save() { localStorage.setItem(STORAGE_KEY, JSON.stringify(books)); }
+function saveIsbnCache() { localStorage.setItem(ISBN_CACHE_KEY, JSON.stringify(isbnCache)); }
 function esc(s) { return (s || "").replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m])); }
 function stars(n) { return n ? "★".repeat(n) + "☆".repeat(5 - n) : "☆☆☆☆☆"; }
 function fakeCover(b) { return `<div class="fake-cover"><div class="fake-author">${esc(b.author || "Auteur")}</div><div class="fake-title">${esc(b.title || "Sans titre")}</div><div class="fake-mark">BIBLIOTHÈQUE D’ELSA</div></div>`; }
@@ -34,6 +37,7 @@ function openModal(i = null) {
   note.value = b.note || "";
   coverUrl.value = (b.cover && b.cover.startsWith("http")) ? b.cover : "";
   tempCover = b.cover || "";
+  if (typeof isbn !== "undefined") isbn.value = b.isbn || "";
   updatePreview();
   hideScannerPanel();
 }
@@ -68,6 +72,7 @@ function saveBook() {
   const b = {
     title: t.value.trim(), author: a.value.trim(), status: st.value,
     rating: +rt.value, note: note.value.trim(), cover: tempCover,
+    isbn: (typeof isbn !== "undefined" ? isbn.value.trim() : ""),
     added: editIndex === null ? Date.now() : books[editIndex].added
   };
   if (editIndex === null) books.unshift(b); else books[editIndex] = b;
@@ -155,87 +160,55 @@ function cleanIsbn(rawCode) {
 
 async function fetchBookByISBN(isbn) {
   showScannerStatus("Recherche du livre…");
-  const setCover = (url) => {
-    if (!url) return;
-    tempCover = url;
-    coverUrl.value = url;
+  console.log("Recherche ISBN backend :", isbn);
+  if (typeof window.isbn !== "undefined") window.isbn.value = isbn;
+  showScannerStatus(`ISBN détecté : ${isbn}`);
+
+  const cached = isbnCache[isbn];
+  if (cached?.title) {
+    t.value = cached.title || "";
+    a.value = cached.authors || "";
+    coverUrl.value = cached.cover || "";
+    tempCover = cached.cover || "";
     updatePreview();
-  };
+    console.log("Source utilisée :", "cache local");
+    showScannerStatus(`ISBN détecté : ${isbn} — Livre trouvé automatiquement`);
+    return true;
+  }
 
   try {
-    const googleUrl = `https://www.googleapis.com/books/v1/volumes?q=isbn:${encodeURIComponent(isbn)}`;
-    console.log("Recherche Google Books :", googleUrl);
-    const g = await fetch(googleUrl);
-    if (g.ok) {
-      const gj = await g.json();
-      console.log("Réponse Google Books :", gj);
-      if (gj.totalItems > 0 && gj.items?.length) {
-        const info = gj.items[0]?.volumeInfo || {};
-        if (info.title) t.value = info.title;
-        if (Array.isArray(info.authors)) a.value = info.authors.join(", ");
-        const image = info.imageLinks?.thumbnail || info.imageLinks?.smallThumbnail;
-        if (image) setCover(image.replace("http://", "https://"));
-        showScannerStatus("Livre trouvé ✅");
-        return true;
-      }
-    }
+    const r = await fetch(`/api/isbn/${encodeURIComponent(isbn)}`);
+    const data = await r.json();
+    console.log("Réponse backend ISBN :", data);
 
-    const openLibraryBooksUrl = `https://openlibrary.org/api/books?bibkeys=ISBN:${encodeURIComponent(isbn)}&format=json&jscmd=data`;
-    console.log("Recherche Open Library :", openLibraryBooksUrl);
-    const ob = await fetch(openLibraryBooksUrl);
-    if (ob.ok) {
-      const obj = await ob.json();
-      console.log("Réponse Open Library :", obj);
-      const entry = obj[`ISBN:${isbn}`];
-      if (entry) {
-        if (entry.title) t.value = entry.title;
-        if (Array.isArray(entry.authors)) {
-          a.value = entry.authors.map((author) => author?.name).filter(Boolean).join(", ");
-        }
-        setCover(`https://covers.openlibrary.org/b/isbn/${encodeURIComponent(isbn)}-L.jpg`);
-        showScannerStatus("Livre trouvé ✅");
-        return true;
-      }
-    }
-
-    const openLibraryIsbnUrl = `https://openlibrary.org/isbn/${encodeURIComponent(isbn)}.json`;
-    console.log("Recherche Open Library :", openLibraryIsbnUrl);
-    const oi = await fetch(openLibraryIsbnUrl);
-    if (oi.ok) {
-      const oij = await oi.json();
-      console.log("Réponse Open Library :", oij);
-      if (oij.title) {
-        t.value = oij.title;
-      }
-      if (Array.isArray(oij.authors) && oij.authors.length) {
-        const names = await Promise.all(oij.authors.map(async (author) => {
-          const ref = author?.key;
-          if (!ref) return "";
-          try {
-            const ra = await fetch(`https://openlibrary.org${ref}.json`);
-            if (!ra.ok) return "";
-            const aj = await ra.json();
-            return aj.name || "";
-          } catch {
-            return "";
-          }
-        }));
-        a.value = names.filter(Boolean).join(", ");
-      }
-      setCover(`https://covers.openlibrary.org/b/isbn/${encodeURIComponent(isbn)}-L.jpg`);
-      showScannerStatus("Livre trouvé ✅");
+    if (r.ok && data?.found) {
+      t.value = data.title || "";
+      a.value = data.authors || "";
+      coverUrl.value = data.cover || "";
+      tempCover = data.cover || "";
+      updatePreview();
+      isbnCache[isbn] = {
+        isbn,
+        title: data.title || "",
+        authors: data.authors || "",
+        cover: data.cover || ""
+      };
+      saveIsbnCache();
+      console.log("Source utilisée :", "backend api");
+      showScannerStatus("Livre trouvé automatiquement");
       return true;
     }
 
-    showScannerStatus("Livre non trouvé automatiquement. Vous pouvez le saisir manuellement.");
+    console.log("Source utilisée :", "aucune");
+    showScannerStatus(`ISBN détecté : ${isbn} — Livre non trouvé automatiquement. Vous pouvez compléter les informations manuellement.`);
     return false;
   } catch (e) {
     console.error(e);
-    showScannerStatus("Erreur réseau pendant la recherche.");
-    alert("Erreur de recherche du livre. Vérifie ta connexion puis réessaie.");
+    showScannerStatus(`ISBN détecté : ${isbn} — Recherche indisponible. Vous pouvez compléter les informations manuellement.`);
     return false;
   }
 }
+
 
 async function handleDetectedCode(raw) {
   if (!scannerActive) return;
