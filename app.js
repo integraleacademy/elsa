@@ -94,6 +94,13 @@ function saveBook() {
 }
 
 function deleteBook(i) { if (confirm("Supprimer ce livre ?")) { books.splice(i, 1); save(); render(); } }
+function syncActiveFilters() {
+  document.querySelectorAll(".tabs button[data-status], .mobile-nav button[data-status]").forEach(btn => {
+    const isActive = (btn.dataset.status || "") === statusFilter;
+    btn.classList.toggle("active", isActive);
+  });
+}
+
 function setStatus(s) { statusFilter = s; render(); }
 function toggleAuthor() { if (typeof authorPanel !== "undefined") authorPanel.style.display = authorPanel.style.display === "none" ? "block" : "none"; }
 
@@ -123,6 +130,7 @@ function render() {
     <span class="badge">${esc(b.status)}</span><div class="cardBtns"><button onclick="openModal(${b._i})">Modifier</button><button onclick="deleteBook(${b._i})">Supprimer</button></div></div></article>
   `).join("") : `<div class="empty">Aucun livre pour le moment.<br><br>Clique sur “+ Ajouter” pour commencer ta bibliothèque 📚</div>`;
   update();
+  syncActiveFilters();
 }
 
 function update() {
