@@ -147,11 +147,9 @@ async function ensureZXingLoaded() {
 }
 
 function cleanIsbn(rawCode) {
-  const clean = (rawCode || "").replace(/[^0-9Xx]/g, "").toUpperCase();
-  if (clean.length === 13 && clean.startsWith("978")) return clean;
-  if (clean.length === 13 && clean.startsWith("979")) return clean;
-  if (clean.length === 12) return clean; // UPC_A
-  if (clean.length === 10) return clean;
+  const compact = (rawCode || "").replace(/\s+/g, "").replace(/-/g, "");
+  const clean = compact.replace(/[^0-9Xx]/g, "").toUpperCase();
+  if (clean.length === 13 && (clean.startsWith("978") || clean.startsWith("979"))) return clean;
   return clean;
 }
 
@@ -165,10 +163,13 @@ async function fetchBookByISBN(isbn) {
   };
 
   try {
-    const g = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${encodeURIComponent(isbn)}`);
+    const googleUrl = `https://www.googleapis.com/books/v1/volumes?q=isbn:${encodeURIComponent(isbn)}`;
+    console.log("Recherche Google Books :", googleUrl);
+    const g = await fetch(googleUrl);
     if (g.ok) {
       const gj = await g.json();
-      if (gj.items?.length) {
+      console.log("Réponse Google Books :", gj);
+      if (gj.totalItems > 0 && gj.items?.length) {
         const info = gj.items[0]?.volumeInfo || {};
         if (info.title) t.value = info.title;
         if (Array.isArray(info.authors)) a.value = info.authors.join(", ");
@@ -179,12 +180,35 @@ async function fetchBookByISBN(isbn) {
       }
     }
 
-    const o = await fetch(`https://openlibrary.org/isbn/${encodeURIComponent(isbn)}.json`);
-    if (o.ok) {
-      const oj = await o.json();
-      if (oj.title) t.value = oj.title;
-      if (Array.isArray(oj.authors) && oj.authors.length) {
-        const names = await Promise.all(oj.authors.map(async (author) => {
+    const openLibraryBooksUrl = `https://openlibrary.org/api/books?bibkeys=ISBN:${encodeURIComponent(isbn)}&format=json&jscmd=data`;
+    console.log("Recherche Open Library :", openLibraryBooksUrl);
+    const ob = await fetch(openLibraryBooksUrl);
+    if (ob.ok) {
+      const obj = await ob.json();
+      console.log("Réponse Open Library :", obj);
+      const entry = obj[`ISBN:${isbn}`];
+      if (entry) {
+        if (entry.title) t.value = entry.title;
+        if (Array.isArray(entry.authors)) {
+          a.value = entry.authors.map((author) => author?.name).filter(Boolean).join(", ");
+        }
+        setCover(`https://covers.openlibrary.org/b/isbn/${encodeURIComponent(isbn)}-L.jpg`);
+        showScannerStatus("Livre trouvé ✅");
+        return true;
+      }
+    }
+
+    const openLibraryIsbnUrl = `https://openlibrary.org/isbn/${encodeURIComponent(isbn)}.json`;
+    console.log("Recherche Open Library :", openLibraryIsbnUrl);
+    const oi = await fetch(openLibraryIsbnUrl);
+    if (oi.ok) {
+      const oij = await oi.json();
+      console.log("Réponse Open Library :", oij);
+      if (oij.title) {
+        t.value = oij.title;
+      }
+      if (Array.isArray(oij.authors) && oij.authors.length) {
+        const names = await Promise.all(oij.authors.map(async (author) => {
           const ref = author?.key;
           if (!ref) return "";
           try {
@@ -203,8 +227,7 @@ async function fetchBookByISBN(isbn) {
       return true;
     }
 
-    showScannerStatus("Aucun livre trouvé pour cet ISBN.");
-    alert("Aucun livre trouvé avec cet ISBN. Tu peux compléter les champs manuellement 😊");
+    showScannerStatus("Livre non trouvé automatiquement. Vous pouvez le saisir manuellement.");
     return false;
   } catch (e) {
     console.error(e);
@@ -216,11 +239,26 @@ async function fetchBookByISBN(isbn) {
 
 async function handleDetectedCode(raw) {
   if (!scannerActive) return;
+  console.log("ISBN scanné brut :", raw);
   const isbn = cleanIsbn(raw);
+  console.log("ISBN normalisé :", isbn);
   if (!isbn) return;
   scannerActive = false;
   showScannerStatus(`Code détecté : ${isbn}`);
   stopScanner();
+  await fetchBookByISBN(isbn);
+}
+
+async function handleManualIsbnSearch() {
+  const rawCode = document.getElementById("manualIsbnInput")?.value || "";
+  console.log("ISBN scanné brut :", rawCode);
+  const isbn = cleanIsbn(rawCode);
+  console.log("ISBN normalisé :", isbn);
+  if (!isbn) {
+    showScannerStatus("Veuillez saisir un ISBN valide.");
+    return;
+  }
+  showScannerStatus(`Code détecté : ${isbn}`);
   await fetchBookByISBN(isbn);
 }
 
@@ -326,6 +364,13 @@ function stopScanner() {
 }
 
 document.getElementById("scanIsbnBtn")?.addEventListener("click", startScanner);
+document.getElementById("manualIsbnSearchBtn")?.addEventListener("click", handleManualIsbnSearch);
+document.getElementById("manualIsbnInput")?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    handleManualIsbnSearch();
+  }
+});
 document.getElementById("stopScanBtn")?.addEventListener("click", () => {
   stopScanner();
   showScannerStatus("Scan arrêté.");
