@@ -4,3 +4,7 @@ services:
     runtime: python
     buildCommand: pip install -r requirements.txt
     startCommand: python -m gunicorn app:app --bind 0.0.0.0:$PORT
+    disks:
+      - name: elsa-data
+        mountPath: /data
+        sizeGB: 1
