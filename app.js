@@ -202,6 +202,10 @@ async function fetchBookByISBN(isbn) {
 
     console.log("Source utilisée :", "aucune");
     if (typeof window.isbn !== "undefined") window.isbn.value = data?.isbn || isbn;
+    if (data?.rateLimited) {
+      showScannerStatus("Recherche automatique temporairement limitée. Vous pouvez compléter le titre et l’auteur manuellement.");
+      return false;
+    }
     showScannerStatus((data && data.message) || `ISBN détecté : ${isbn} — Livre non trouvé automatiquement. Vous pouvez compléter les informations manuellement.`);
     return false;
   } catch (e) {
