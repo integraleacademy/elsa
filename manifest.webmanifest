@@ -1,0 +1,15 @@
+{
+  "name": "Ma Biblioth\u00e8que Elsa",
+  "short_name": "Biblioth\u00e8que",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#08050d",
+  "theme_color": "#0b0610",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
