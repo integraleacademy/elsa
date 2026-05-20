@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 import urllib.error
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
@@ -18,6 +20,26 @@ if not DATA_DIR.exists() or not os.access(DATA_DIR, os.W_OK):
     DATA_DIR = Path("./data")
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 BOOKS_FILE = DATA_DIR / "books.json"
+ISBN_CACHE_FILE = DATA_DIR / "isbn_cache.json"
+
+KNOWN_ISBN = {
+    "9782749956664": {
+        "found": True,
+        "isbn": "9782749956664",
+        "title": "D’entre les morts",
+        "authors": "Alexis Laipsker",
+        "publisher": "Michel Lafon",
+        "cover": "",
+    },
+    "9782265159075": {
+        "found": True,
+        "isbn": "9782265159075",
+        "title": "L’Autre moi",
+        "authors": "Franck Thilliez",
+        "publisher": "Fleuve Éditions",
+        "cover": "",
+    },
+}
 
 
 def _read_books() -> list[dict]:
@@ -73,9 +95,123 @@ def _safe_get_json(url: str) -> dict | list | None:
     try:
         with urllib.request.urlopen(url, timeout=8) as response:
             return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as err:
+        if err.code == 429:
+            raise
+        print("Erreur API:", url, err)
+        return None
     except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as err:
         print("Erreur API:", url, err)
         return None
+
+
+def _read_isbn_cache() -> dict[str, dict]:
+    if not ISBN_CACHE_FILE.exists():
+        return {}
+    try:
+        with ISBN_CACHE_FILE.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _write_isbn_cache(cache: dict[str, dict]) -> None:
+    tmp_file = ISBN_CACHE_FILE.with_suffix(".tmp")
+    with tmp_file.open("w", encoding="utf-8") as f:
+        json.dump(cache, f, ensure_ascii=False)
+    tmp_file.replace(ISBN_CACHE_FILE)
+
+
+def _cache_isbn_result(isbn: str, payload: dict) -> None:
+    cache = _read_isbn_cache()
+    row = dict(payload)
+    row["cachedAt"] = datetime.now(timezone.utc).isoformat()
+    cache[isbn] = row
+    _write_isbn_cache(cache)
+
+
+def _lookup_google_cover(isbn: str) -> str:
+    urls = [
+        f"https://www.googleapis.com/books/v1/volumes?q=isbn:{urllib.parse.quote(isbn)}",
+        f"https://www.googleapis.com/books/v1/volumes?q={urllib.parse.quote(isbn)}",
+    ]
+    for url in urls:
+        try:
+            data = _safe_get_json(url)
+        except urllib.error.HTTPError:
+            continue
+        if not isinstance(data, dict) or not data.get("items"):
+            continue
+        info = data["items"][0].get("volumeInfo", {})
+        cover = info.get("imageLinks", {}).get("thumbnail") or info.get("imageLinks", {}).get("smallThumbnail") or ""
+        if cover.startswith("http://"):
+            cover = "https://" + cover[len("http://"):]
+        if cover:
+            return cover
+    return ""
+
+
+def lookup_bnf_isbn(isbn: str) -> dict | None:
+    url = (
+        "https://catalogue.bnf.fr/api/SRU?version=1.2&operation=searchRetrieve"
+        f"&query=bib.isbn%20all%20%22{urllib.parse.quote(isbn)}%22"
+        "&recordSchema=unimarcxchange&maximumRecords=1"
+    )
+    try:
+        with urllib.request.urlopen(url, timeout=8) as response:
+            xml_text = response.read().decode("utf-8", errors="replace")
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError) as err:
+        print("Erreur BnF:", err)
+        return None
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError as err:
+        print("XML BnF invalide:", err)
+        return None
+
+    title = ""
+    authors: list[str] = []
+    publisher = ""
+    date = ""
+    datafields = root.findall(".//{*}datafield")
+    for field in datafields:
+        tag = field.attrib.get("tag", "")
+        subfields = field.findall("{*}subfield")
+        if tag == "200":
+            for sf in subfields:
+                code = sf.attrib.get("code")
+                text = (sf.text or "").strip()
+                if code == "a" and text and not title:
+                    title = text
+                elif code == "f" and text:
+                    authors.append(text)
+        elif tag == "700":
+            for sf in subfields:
+                if sf.attrib.get("code") == "a" and (sf.text or "").strip():
+                    authors.append((sf.text or "").strip())
+        elif tag == "210":
+            for sf in subfields:
+                code = sf.attrib.get("code")
+                text = (sf.text or "").strip()
+                if code == "c" and text and not publisher:
+                    publisher = text
+                elif code == "d" and text and not date:
+                    date = text
+
+    authors_text = ", ".join(dict.fromkeys(a for a in authors if a))
+    if title and authors_text:
+        return {
+            "found": True,
+            "source": "bnf",
+            "isbn": isbn,
+            "title": title,
+            "authors": authors_text,
+            "publisher": publisher,
+            "date": date,
+            "cover": "",
+        }
+    return None
 
 
 @app.get("/api/isbn/<isbn>")
@@ -86,9 +222,35 @@ def lookup_isbn(isbn):
     if not normalized_isbn:
         return jsonify({"found": False, "isbn": isbn, "error": "Livre non trouvé"})
 
+    cache = _read_isbn_cache()
+    cached = cache.get(normalized_isbn)
+    if isinstance(cached, dict):
+        print("ISBN trouvé dans cache serveur:", normalized_isbn)
+        return jsonify(cached)
+
+    bnf_data = lookup_bnf_isbn(normalized_isbn)
+    if bnf_data:
+        print("Source utilisée : BnF")
+        if not bnf_data.get("cover"):
+            bnf_data["cover"] = _lookup_google_cover(normalized_isbn)
+        _cache_isbn_result(normalized_isbn, bnf_data)
+        return jsonify(bnf_data)
+
     google_url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{urllib.parse.quote(normalized_isbn)}"
-    print("Google Books:", google_url)
-    google_data = _safe_get_json(google_url)
+    print("Google Books (strict):", google_url)
+    try:
+        google_data = _safe_get_json(google_url)
+    except urllib.error.HTTPError as err:
+        if err.code == 429:
+            return jsonify(
+                {
+                    "found": False,
+                    "rateLimited": True,
+                    "isbn": normalized_isbn,
+                    "message": "Recherche automatique temporairement limitée. Complète le livre manuellement.",
+                }
+            )
+        raise
     if isinstance(google_data, dict) and google_data.get("totalItems", 0) > 0 and google_data.get("items"):
         info = google_data["items"][0].get("volumeInfo", {})
         title = info.get("title")
@@ -98,11 +260,25 @@ def lookup_isbn(isbn):
             if cover.startswith("http://"):
                 cover = "https://" + cover[len("http://"):]
             print("Livre trouvé:", title)
-            return jsonify({"found": True, "isbn": normalized_isbn, "title": title, "authors": authors, "cover": cover})
+            payload = {"found": True, "isbn": normalized_isbn, "title": title, "authors": authors, "cover": cover}
+            _cache_isbn_result(normalized_isbn, payload)
+            return jsonify(payload)
 
     google_fallback_url = f"https://www.googleapis.com/books/v1/volumes?q={urllib.parse.quote(normalized_isbn)}"
-    print("Google Books:", google_fallback_url)
-    google_fallback_data = _safe_get_json(google_fallback_url)
+    print("Google Books (large):", google_fallback_url)
+    try:
+        google_fallback_data = _safe_get_json(google_fallback_url)
+    except urllib.error.HTTPError as err:
+        if err.code == 429:
+            return jsonify(
+                {
+                    "found": False,
+                    "rateLimited": True,
+                    "isbn": normalized_isbn,
+                    "message": "Recherche automatique temporairement limitée. Complète le livre manuellement.",
+                }
+            )
+        raise
     if isinstance(google_fallback_data, dict) and google_fallback_data.get("totalItems", 0) > 0 and google_fallback_data.get("items"):
         info = google_fallback_data["items"][0].get("volumeInfo", {})
         title = info.get("title")
@@ -112,7 +288,9 @@ def lookup_isbn(isbn):
             if cover.startswith("http://"):
                 cover = "https://" + cover[len("http://"):]
             print("Livre trouvé:", title)
-            return jsonify({"found": True, "isbn": normalized_isbn, "title": title, "authors": authors, "cover": cover})
+            payload = {"found": True, "isbn": normalized_isbn, "title": title, "authors": authors, "cover": cover}
+            _cache_isbn_result(normalized_isbn, payload)
+            return jsonify(payload)
 
     open_books_url = (
         "https://openlibrary.org/api/books"
@@ -135,7 +313,9 @@ def lookup_isbn(isbn):
             if not cover:
                 cover = f"https://covers.openlibrary.org/b/isbn/{urllib.parse.quote(normalized_isbn)}-L.jpg"
             print("Livre trouvé:", title)
-            return jsonify({"found": True, "isbn": normalized_isbn, "title": title, "authors": authors, "cover": cover})
+            payload = {"found": True, "isbn": normalized_isbn, "title": title, "authors": authors, "cover": cover}
+            _cache_isbn_result(normalized_isbn, payload)
+            return jsonify(payload)
 
     open_isbn_url = f"https://openlibrary.org/isbn/{urllib.parse.quote(normalized_isbn)}.json"
     print("Open Library:", open_isbn_url)
@@ -158,9 +338,17 @@ def lookup_isbn(isbn):
             authors = ", ".join(author_names)
         cover = f"https://covers.openlibrary.org/b/isbn/{urllib.parse.quote(normalized_isbn)}-L.jpg"
         print("Livre trouvé:", title)
-        return jsonify({"found": True, "isbn": normalized_isbn, "title": title, "authors": authors, "cover": cover})
+        payload = {"found": True, "isbn": normalized_isbn, "title": title, "authors": authors, "cover": cover}
+        _cache_isbn_result(normalized_isbn, payload)
+        return jsonify(payload)
 
-    return jsonify({"found": False, "isbn": normalized_isbn, "error": "Livre non trouvé"})
+    not_found_payload = {
+        "found": False,
+        "isbn": normalized_isbn,
+        "message": "Livre non trouvé automatiquement. Complète le titre et l’auteur manuellement.",
+    }
+    _cache_isbn_result(normalized_isbn, not_found_payload)
+    return jsonify(not_found_payload)
 
 @app.get("/<path:path>")
 def static_files(path):
