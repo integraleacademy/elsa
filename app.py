@@ -132,23 +132,57 @@ def _cache_isbn_result(isbn: str, payload: dict) -> None:
 
 
 def _lookup_google_cover(isbn: str) -> str:
-    urls = [
-        f"https://www.googleapis.com/books/v1/volumes?q=isbn:{urllib.parse.quote(isbn)}",
-        f"https://www.googleapis.com/books/v1/volumes?q={urllib.parse.quote(isbn)}",
-    ]
-    for url in urls:
-        try:
-            data = _safe_get_json(url)
-        except urllib.error.HTTPError:
-            continue
-        if not isinstance(data, dict) or not data.get("items"):
-            continue
-        info = data["items"][0].get("volumeInfo", {})
-        cover = info.get("imageLinks", {}).get("thumbnail") or info.get("imageLinks", {}).get("smallThumbnail") or ""
-        if cover.startswith("http://"):
-            cover = "https://" + cover[len("http://"):]
-        if cover:
-            return cover
+    url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{urllib.parse.quote(isbn)}"
+    try:
+        data = _safe_get_json(url)
+    except urllib.error.HTTPError:
+        return ""
+    if not isinstance(data, dict) or not data.get("items"):
+        return ""
+    info = data["items"][0].get("volumeInfo", {})
+    cover = info.get("imageLinks", {}).get("thumbnail") or info.get("imageLinks", {}).get("smallThumbnail") or ""
+    if cover.startswith("http://"):
+        cover = "https://" + cover[len("http://"):]
+    return cover
+
+
+def _isbn13_to_isbn10(isbn13: str) -> str:
+    if len(isbn13) != 13 or not isbn13.startswith("978") or not isbn13.isdigit():
+        return ""
+    core = isbn13[3:12]
+    total = 0
+    for idx, ch in enumerate(core, start=1):
+        total += idx * int(ch)
+    remainder = total % 11
+    check = "X" if remainder == 10 else str(remainder)
+    return core + check
+
+
+def _is_valid_cover_url(url: str) -> bool:
+    req = urllib.request.Request(url, method="HEAD")
+    try:
+        with urllib.request.urlopen(req, timeout=8) as response:
+            status_ok = getattr(response, "status", 200) == 200
+            content_type = (response.headers.get("Content-Type") or "").lower()
+            content_len = int(response.headers.get("Content-Length") or "0")
+            return status_ok and content_type.startswith("image/") and content_len > 1000
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError, ValueError):
+        return False
+
+
+def find_cover_for_isbn(isbn: str) -> str:
+    google_cover = _lookup_google_cover(isbn)
+    if google_cover:
+        return google_cover
+
+    candidates = [f"https://covers.openlibrary.org/b/isbn/{urllib.parse.quote(isbn)}-L.jpg"]
+    isbn10 = _isbn13_to_isbn10(isbn)
+    if isbn10:
+        candidates.append(f"https://covers.openlibrary.org/b/isbn/{urllib.parse.quote(isbn10)}-L.jpg")
+
+    for url in candidates:
+        if _is_valid_cover_url(url):
+            return url
     return ""
 
 
@@ -209,7 +243,7 @@ def lookup_bnf_isbn(isbn: str) -> dict | None:
             "authors": authors_text,
             "publisher": publisher,
             "date": date,
-            "cover": "",
+            "cover": find_cover_for_isbn(isbn),
         }
     return None
 
@@ -231,8 +265,6 @@ def lookup_isbn(isbn):
     bnf_data = lookup_bnf_isbn(normalized_isbn)
     if bnf_data:
         print("Source utilisée : BnF")
-        if not bnf_data.get("cover"):
-            bnf_data["cover"] = _lookup_google_cover(normalized_isbn)
         _cache_isbn_result(normalized_isbn, bnf_data)
         return jsonify(bnf_data)
 
