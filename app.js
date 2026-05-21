@@ -113,7 +113,6 @@ function rateBook(index, rating) {
   save();
   render();
 }
-function syncActiveFilters() {}
 function syncActiveFilters() {
   document.querySelectorAll(".tabs button[data-status]").forEach(btn => {
     const isActive = (btn.dataset.status || "") === statusFilter;
@@ -169,34 +168,26 @@ function addNewsToWishlist(title, author, cover) {
 }
 
 async function loadThrillerNews() {
-
   const list = document.getElementById("thrillerNews");
   if (!list) return;
   list.innerHTML = "Chargement des nouveautés...";
+
   try {
     const res = await fetch("https://openlibrary.org/subjects/thriller.json?limit=8");
     const data = await res.json();
     const works = Array.isArray(data.works) ? data.works : [];
+
     thrillerNews = works.map(w => ({
       title: w.title || "Sans titre",
       author: (w.authors && w.authors[0] && w.authors[0].name) ? w.authors[0].name : "Auteur inconnu",
       cover: w.cover_id ? `https://covers.openlibrary.org/b/id/${w.cover_id}-L.jpg` : ""
     }));
+
+    list.innerHTML = thrillerNews.length
+      ? thrillerNews.map((w, i) => `<div class="news-item"><div class="news-meta"><b>${esc(w.title)}</b><span>${esc(w.author)}</span></div><button type="button" class="soft" onclick='addNewsToWishlist(${JSON.stringify(w.title)}, ${JSON.stringify(w.author)}, ${JSON.stringify(w.cover)})'>💖 Wishlist</button></div>`).join("")
+      : "Aucune nouveauté trouvée pour le moment.";
   } catch (e) {
     thrillerNews = [];
-    if (!works.length) {
-      list.innerHTML = "Aucune nouveauté trouvée pour le moment.";
-      return;
-    }
-    list.innerHTML = works.map(w => {
-      const rawTitle = w.title || "Sans titre";
-      const rawAuthor = (w.authors && w.authors[0] && w.authors[0].name) ? w.authors[0].name : "Auteur inconnu";
-      const cover = w.cover_id ? `https://covers.openlibrary.org/b/id/${w.cover_id}-S.jpg` : "";
-      const title = esc(rawTitle);
-      const author = esc(rawAuthor);
-      return `<div class="news-item"><div class="news-meta"><b>${title}</b><span>${author}</span></div><button type="button" class="soft" onclick='addNewsToWishlist(${JSON.stringify(rawTitle)}, ${JSON.stringify(rawAuthor)}, ${JSON.stringify(cover)})'>💖 Wishlist</button></div>`;
-    }).join("");
-  } catch (e) {
     list.innerHTML = "Impossible de charger les nouveautés pour l'instant.";
   }
 }
@@ -235,9 +226,6 @@ function render() {
 function update() {
   count.textContent = books.length;
   totalMini.textContent = books.length;
-  const readPages = books.filter(b => b.status === "Lu").reduce((n,b)=> n + (Number(b.pages)||0), 0);
-  const el = document.getElementById("totalReadPages");
-  if (el) el.textContent = String(readPages);
   const readPages = books.filter(b => b.status === "Lu").reduce((sum, b) => sum + (Number(b.pages) || 0), 0);
   const readPagesEl = document.getElementById("totalReadPages");
   if (readPagesEl) readPagesEl.textContent = String(readPages);
