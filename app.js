@@ -9,6 +9,7 @@ function hasMissingMetadata(book) {
 let books = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
 let isbnCache = JSON.parse(localStorage.getItem(ISBN_CACHE_KEY) || "{}");
 let statusFilter = "", sortBy = "recent", editIndex = null, tempCover = "";
+let thrillerNews = [];
 
 let scannerStream = null;
 let scannerTimer = null;
@@ -113,7 +114,7 @@ function rateBook(index, rating) {
   render();
 }
 function syncActiveFilters() {
-  document.querySelectorAll(".tabs button[data-status], .mobile-nav button[data-status]").forEach(btn => {
+  document.querySelectorAll(".tabs button[data-status]").forEach(btn => {
     const isActive = (btn.dataset.status || "") === statusFilter;
     btn.classList.toggle("active", isActive);
   });
@@ -167,6 +168,7 @@ function addNewsToWishlist(title, author, cover) {
 }
 
 async function loadThrillerNews() {
+
   const list = document.getElementById("thrillerNews");
   if (!list) return;
   list.innerHTML = "Chargement des nouveautés...";
@@ -174,6 +176,13 @@ async function loadThrillerNews() {
     const res = await fetch("https://openlibrary.org/subjects/thriller.json?limit=8");
     const data = await res.json();
     const works = Array.isArray(data.works) ? data.works : [];
+    thrillerNews = works.map(w => ({
+      title: w.title || "Sans titre",
+      author: (w.authors && w.authors[0] && w.authors[0].name) ? w.authors[0].name : "Auteur inconnu",
+      cover: w.cover_id ? `https://covers.openlibrary.org/b/id/${w.cover_id}-L.jpg` : ""
+    }));
+  } catch (e) {
+    thrillerNews = [];
     if (!works.length) {
       list.innerHTML = "Aucune nouveauté trouvée pour le moment.";
       return;
@@ -202,6 +211,16 @@ function render() {
     : sortBy === "author" ? a.author.localeCompare(b.author)
     : sortBy === "rating" ? (b.rating || 0) - (a.rating || 0)
     : (b.added || 0) - (a.added || 0));
+
+  if (statusFilter === "Nouveautés") {
+    grid.innerHTML = thrillerNews.length ? thrillerNews.map((n, i) => `
+      <article class="book"><div class="cover">${n.cover ? `<img src="${esc(n.cover)}" onerror="this.remove()">` : fakeCover(n)}</div>
+      <div class="info"><div class="title">${esc(n.title)}</div><div class="author">${esc(n.author)}</div><span class="badge">Nouveauté</span><div class="cardBtns"><button data-news-index="${i}" class="add-news-btn">💖 Wishlist</button></div></div></article>
+    `).join("") : `<div class="empty">Aucune nouveauté pour le moment.</div>`;
+    update();
+    syncActiveFilters();
+    return;
+  }
 
   grid.innerHTML = arr.length ? arr.map(b => `
     <article class="book"><div class="cover">${fakeCover(b)}${b.cover ? `<img src="${esc(b.cover)}" onerror="this.remove()">` : ""}</div>
@@ -510,3 +529,13 @@ grid.addEventListener("click", (event) => {
   rateBook(index, rating);
 });
 
+
+
+grid.addEventListener("click", (event) => {
+  const newsBtn = event.target.closest(".add-news-btn");
+  if (!newsBtn) return;
+  const i = Number(newsBtn.dataset.newsIndex);
+  const n = thrillerNews[i];
+  if (!n) return;
+  addNewsToWishlist(n.title, n.author, n.cover);
+});
