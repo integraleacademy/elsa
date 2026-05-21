@@ -9,6 +9,7 @@ function hasMissingMetadata(book) {
 let books = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
 let isbnCache = JSON.parse(localStorage.getItem(ISBN_CACHE_KEY) || "{}");
 let statusFilter = "", sortBy = "recent", editIndex = null, tempCover = "";
+let thrillerNews = [];
 
 let scannerStream = null;
 let scannerTimer = null;
@@ -113,7 +114,7 @@ function rateBook(index, rating) {
   render();
 }
 function syncActiveFilters() {
-  document.querySelectorAll(".tabs button[data-status], .mobile-nav button[data-status]").forEach(btn => {
+  document.querySelectorAll(".tabs button[data-status]").forEach(btn => {
     const isActive = (btn.dataset.status || "") === statusFilter;
     btn.classList.toggle("active", isActive);
   });
@@ -145,6 +146,60 @@ function setAuthorSearch(v) {
   render();
 }
 
+function addNewsToWishlist(title, author, cover) {
+  if (!title) return;
+  const existing = books.find(b => (b.title || "").toLowerCase() === title.toLowerCase() && (b.author || "").toLowerCase() === (author || "").toLowerCase());
+  if (existing) {
+    existing.status = "Wishlist";
+  } else {
+    books.unshift({
+      title: title.trim(),
+      author: (author || "Auteur inconnu").trim(),
+      status: "Wishlist",
+      rating: 0,
+      note: "",
+      cover: cover || "",
+      pages: 0,
+      added: Date.now()
+    });
+  }
+  save();
+  render();
+}
+
+async function loadThrillerNews() {
+
+  const list = document.getElementById("thrillerNews");
+  if (!list) return;
+  list.innerHTML = "Chargement des nouveautés...";
+  try {
+    const res = await fetch("https://openlibrary.org/subjects/thriller.json?limit=8");
+    const data = await res.json();
+    const works = Array.isArray(data.works) ? data.works : [];
+    thrillerNews = works.map(w => ({
+      title: w.title || "Sans titre",
+      author: (w.authors && w.authors[0] && w.authors[0].name) ? w.authors[0].name : "Auteur inconnu",
+      cover: w.cover_id ? `https://covers.openlibrary.org/b/id/${w.cover_id}-L.jpg` : ""
+    }));
+  } catch (e) {
+    thrillerNews = [];
+    if (!works.length) {
+      list.innerHTML = "Aucune nouveauté trouvée pour le moment.";
+      return;
+    }
+    list.innerHTML = works.map(w => {
+      const rawTitle = w.title || "Sans titre";
+      const rawAuthor = (w.authors && w.authors[0] && w.authors[0].name) ? w.authors[0].name : "Auteur inconnu";
+      const cover = w.cover_id ? `https://covers.openlibrary.org/b/id/${w.cover_id}-S.jpg` : "";
+      const title = esc(rawTitle);
+      const author = esc(rawAuthor);
+      return `<div class="news-item"><div class="news-meta"><b>${title}</b><span>${author}</span></div><button type="button" class="soft" onclick='addNewsToWishlist(${JSON.stringify(rawTitle)}, ${JSON.stringify(rawAuthor)}, ${JSON.stringify(cover)})'>💖 Wishlist</button></div>`;
+    }).join("");
+  } catch (e) {
+    list.innerHTML = "Impossible de charger les nouveautés pour l'instant.";
+  }
+}
+
 function render() {
   const q = search.value.toLowerCase(), au = authorFilter.value.toLowerCase();
   let arr = books.map((b, i) => ({ ...b, _i: i })).filter(b =>
@@ -156,6 +211,16 @@ function render() {
     : sortBy === "author" ? a.author.localeCompare(b.author)
     : sortBy === "rating" ? (b.rating || 0) - (a.rating || 0)
     : (b.added || 0) - (a.added || 0));
+
+  if (statusFilter === "Nouveautés") {
+    grid.innerHTML = thrillerNews.length ? thrillerNews.map((n, i) => `
+      <article class="book"><div class="cover">${n.cover ? `<img src="${esc(n.cover)}" onerror="this.remove()">` : fakeCover(n)}</div>
+      <div class="info"><div class="title">${esc(n.title)}</div><div class="author">${esc(n.author)}</div><span class="badge">Nouveauté</span><div class="cardBtns"><button data-news-index="${i}" class="add-news-btn">💖 Wishlist</button></div></div></article>
+    `).join("") : `<div class="empty">Aucune nouveauté pour le moment.</div>`;
+    update();
+    syncActiveFilters();
+    return;
+  }
 
   grid.innerHTML = arr.length ? arr.map(b => `
     <article class="book"><div class="cover">${fakeCover(b)}${b.cover ? `<img src="${esc(b.cover)}" onerror="this.remove()">` : ""}</div>
@@ -169,6 +234,9 @@ function render() {
 function update() {
   count.textContent = books.length;
   totalMini.textContent = books.length;
+  const readPages = books.filter(b => b.status === "Lu").reduce((sum, b) => sum + (Number(b.pages) || 0), 0);
+  const readPagesEl = document.getElementById("totalReadPages");
+  if (readPagesEl) readPagesEl.textContent = String(readPages);
 }
 
 function exportData() {
@@ -449,6 +517,7 @@ document.getElementById("stopScanBtn")?.addEventListener("click", () => {
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 applyTheme();
 render();
+loadThrillerNews();
 
 
 grid.addEventListener("click", (event) => {
@@ -458,4 +527,15 @@ grid.addEventListener("click", (event) => {
   const rating = Number(btn.dataset.rateValue);
   if (!Number.isInteger(index) || !Number.isInteger(rating)) return;
   rateBook(index, rating);
+});
+
+
+
+grid.addEventListener("click", (event) => {
+  const newsBtn = event.target.closest(".add-news-btn");
+  if (!newsBtn) return;
+  const i = Number(newsBtn.dataset.newsIndex);
+  const n = thrillerNews[i];
+  if (!n) return;
+  addNewsToWishlist(n.title, n.author, n.cover);
 });
