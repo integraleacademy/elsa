@@ -169,6 +169,9 @@ function addNewsToWishlist(title, author, cover) {
 
 async function loadThrillerNews() {
 
+  const list = document.getElementById("thrillerNews");
+  if (!list) return;
+  list.innerHTML = "Chargement des nouveautés...";
   try {
     const res = await fetch("https://openlibrary.org/subjects/thriller.json?limit=8");
     const data = await res.json();
@@ -180,6 +183,20 @@ async function loadThrillerNews() {
     }));
   } catch (e) {
     thrillerNews = [];
+    if (!works.length) {
+      list.innerHTML = "Aucune nouveauté trouvée pour le moment.";
+      return;
+    }
+    list.innerHTML = works.map(w => {
+      const rawTitle = w.title || "Sans titre";
+      const rawAuthor = (w.authors && w.authors[0] && w.authors[0].name) ? w.authors[0].name : "Auteur inconnu";
+      const cover = w.cover_id ? `https://covers.openlibrary.org/b/id/${w.cover_id}-S.jpg` : "";
+      const title = esc(rawTitle);
+      const author = esc(rawAuthor);
+      return `<div class="news-item"><div class="news-meta"><b>${title}</b><span>${author}</span></div><button type="button" class="soft" onclick='addNewsToWishlist(${JSON.stringify(rawTitle)}, ${JSON.stringify(rawAuthor)}, ${JSON.stringify(cover)})'>💖 Wishlist</button></div>`;
+    }).join("");
+  } catch (e) {
+    list.innerHTML = "Impossible de charger les nouveautés pour l'instant.";
   }
 }
 
