@@ -133,6 +133,10 @@ function syncActiveFilters() {
     const isActive = (btn.dataset.status || "") === statusFilter;
     btn.classList.toggle("active", isActive);
   });
+  document.querySelectorAll(".mobile-nav button[data-status]").forEach(btn => {
+    const isActive = (btn.dataset.status || "") === statusFilter;
+    btn.classList.toggle("active", isActive);
+  });
 }
 
 function setStatus(s) { statusFilter = s; render(); }
