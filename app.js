@@ -161,11 +161,6 @@ function render() {
 function update() {
   count.textContent = books.length;
   totalMini.textContent = books.length;
-  sTotal.textContent = books.length;
-  sRead.textContent = books.filter(b => b.status === "Lu").length;
-  sCourse.textContent = books.filter(b => b.status === "En cours").length;
-  sWish.textContent = books.filter(b => b.status === "Wishlist").length;
-  sAuthors.textContent = new Set(books.map(b => b.author).filter(Boolean)).size;
 }
 
 function exportData() {
