@@ -113,6 +113,7 @@ function rateBook(index, rating) {
   save();
   render();
 }
+function syncActiveFilters() {}
 function syncActiveFilters() {
   document.querySelectorAll(".tabs button[data-status]").forEach(btn => {
     const isActive = (btn.dataset.status || "") === statusFilter;
@@ -234,6 +235,9 @@ function render() {
 function update() {
   count.textContent = books.length;
   totalMini.textContent = books.length;
+  const readPages = books.filter(b => b.status === "Lu").reduce((n,b)=> n + (Number(b.pages)||0), 0);
+  const el = document.getElementById("totalReadPages");
+  if (el) el.textContent = String(readPages);
   const readPages = books.filter(b => b.status === "Lu").reduce((sum, b) => sum + (Number(b.pages) || 0), 0);
   const readPagesEl = document.getElementById("totalReadPages");
   if (readPagesEl) readPagesEl.textContent = String(readPages);
