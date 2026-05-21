@@ -1,5 +1,6 @@
 const STORAGE_KEY = "elsaLibrary_EMPTY_MANUAL_v1";
 const ISBN_CACHE_KEY = "elsaIsbnCache_v1";
+const BOOKS_API_URL = "/api/books";
 
 function hasMissingMetadata(book) {
   if (!book || !book.title) return false;
@@ -18,7 +19,19 @@ let barcodeDetector = null;
 let zxingReader = null;
 let zxingControls = null;
 
-function save() { localStorage.setItem(STORAGE_KEY, JSON.stringify(books)); }
+async function save() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(books));
+  try {
+    const res = await fetch(BOOKS_API_URL, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(books)
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (err) {
+    console.warn("Impossible de synchroniser la bibliothèque sur le serveur.", err);
+  }
+}
 function saveIsbnCache() { localStorage.setItem(ISBN_CACHE_KEY, JSON.stringify(isbnCache)); }
 function esc(s) { return (s || "").replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m])); }
 function stars(n) { return n ? "★".repeat(n) + "☆".repeat(5 - n) : "☆☆☆☆☆"; }
@@ -102,7 +115,9 @@ function saveBook() {
     added: editIndex === null ? Date.now() : books[editIndex].added
   };
   if (editIndex === null) books.unshift(b); else books[editIndex] = b;
-  save(); render(); closeModal();
+  save();
+  render();
+  closeModal();
 }
 
 function deleteBook(i) { if (confirm("Supprimer ce livre ?")) { books.splice(i, 1); save(); render(); } }
@@ -229,6 +244,22 @@ function update() {
   const readPages = books.filter(b => b.status === "Lu").reduce((sum, b) => sum + (Number(b.pages) || 0), 0);
   const readPagesEl = document.getElementById("totalReadPages");
   if (readPagesEl) readPagesEl.textContent = String(readPages);
+}
+
+async function loadBooks() {
+  try {
+    const res = await fetch(BOOKS_API_URL, { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const serverBooks = await res.json();
+    if (Array.isArray(serverBooks)) {
+      books = serverBooks;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(books));
+    }
+  } catch (err) {
+    console.warn("Impossible de charger la bibliothèque depuis le serveur, utilisation des données locales.", err);
+  } finally {
+    render();
+  }
 }
 
 function exportData() {
@@ -508,7 +539,7 @@ document.getElementById("stopScanBtn")?.addEventListener("click", () => {
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 applyTheme();
-render();
+loadBooks();
 loadThrillerNews();
 
 
