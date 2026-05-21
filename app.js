@@ -9,6 +9,7 @@ function hasMissingMetadata(book) {
 let books = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
 let isbnCache = JSON.parse(localStorage.getItem(ISBN_CACHE_KEY) || "{}");
 let statusFilter = "", sortBy = "recent", editIndex = null, tempCover = "";
+let thrillerNews = [];
 
 let scannerStream = null;
 let scannerTimer = null;
@@ -113,7 +114,7 @@ function rateBook(index, rating) {
   render();
 }
 function syncActiveFilters() {
-  document.querySelectorAll(".tabs button[data-status], .mobile-nav button[data-status]").forEach(btn => {
+  document.querySelectorAll(".tabs button[data-status]").forEach(btn => {
     const isActive = (btn.dataset.status || "") === statusFilter;
     btn.classList.toggle("active", isActive);
   });
@@ -127,6 +128,14 @@ function updateBookStatus(index, status) {
   save();
   render();
 }
+
+function cycleBookStatus(index) {
+  if (typeof books[index] === "undefined") return;
+  const statuses = ["À lire", "En cours", "Lu", "Wishlist"];
+  const currentIndex = statuses.indexOf(books[index].status);
+  const nextStatus = statuses[(currentIndex + 1) % statuses.length];
+  updateBookStatus(index, nextStatus);
+}
 function toggleAuthor() { if (typeof authorPanel !== "undefined") authorPanel.style.display = authorPanel.style.display === "none" ? "block" : "none"; }
 
 function setAuthorSearch(v) {
@@ -135,6 +144,43 @@ function setAuthorSearch(v) {
   if (a && a.value !== v) a.value = v;
   if (m && m.value !== v) m.value = v;
   render();
+}
+
+function addNewsToWishlist(title, author, cover) {
+  if (!title) return;
+  const existing = books.find(b => (b.title || "").toLowerCase() === title.toLowerCase() && (b.author || "").toLowerCase() === (author || "").toLowerCase());
+  if (existing) {
+    existing.status = "Wishlist";
+  } else {
+    books.unshift({
+      title: title.trim(),
+      author: (author || "Auteur inconnu").trim(),
+      status: "Wishlist",
+      rating: 0,
+      note: "",
+      cover: cover || "",
+      pages: 0,
+      added: Date.now()
+    });
+  }
+  save();
+  render();
+}
+
+async function loadThrillerNews() {
+
+  try {
+    const res = await fetch("https://openlibrary.org/subjects/thriller.json?limit=8");
+    const data = await res.json();
+    const works = Array.isArray(data.works) ? data.works : [];
+    thrillerNews = works.map(w => ({
+      title: w.title || "Sans titre",
+      author: (w.authors && w.authors[0] && w.authors[0].name) ? w.authors[0].name : "Auteur inconnu",
+      cover: w.cover_id ? `https://covers.openlibrary.org/b/id/${w.cover_id}-L.jpg` : ""
+    }));
+  } catch (e) {
+    thrillerNews = [];
+  }
 }
 
 function render() {
@@ -149,10 +195,20 @@ function render() {
     : sortBy === "rating" ? (b.rating || 0) - (a.rating || 0)
     : (b.added || 0) - (a.added || 0));
 
+  if (statusFilter === "Nouveautés") {
+    grid.innerHTML = thrillerNews.length ? thrillerNews.map((n, i) => `
+      <article class="book"><div class="cover">${n.cover ? `<img src="${esc(n.cover)}" onerror="this.remove()">` : fakeCover(n)}</div>
+      <div class="info"><div class="title">${esc(n.title)}</div><div class="author">${esc(n.author)}</div><span class="badge">Nouveauté</span><div class="cardBtns"><button data-news-index="${i}" class="add-news-btn">💖 Wishlist</button></div></div></article>
+    `).join("") : `<div class="empty">Aucune nouveauté pour le moment.</div>`;
+    update();
+    syncActiveFilters();
+    return;
+  }
+
   grid.innerHTML = arr.length ? arr.map(b => `
     <article class="book"><div class="cover">${fakeCover(b)}${b.cover ? `<img src="${esc(b.cover)}" onerror="this.remove()">` : ""}</div>
     <div class="info"><div class="title">${esc(b.title)}</div><div class="author">${esc(b.author)}</div>${b.isbn ? `<div class="isbn">ISBN : ${esc(b.isbn)}</div>` : ""}${b.publisher ? `<div class="isbn">Éditeur : ${esc(b.publisher)}</div>` : ""}${b.publishedDate ? `<div class="isbn">Date : ${esc(b.publishedDate)}</div>` : ""}${b.pages ? `<div class="isbn">Pages : ${esc(String(b.pages))}</div>` : ""}${ratingButtons(b.rating, b._i)}
-    <span class="badge">${esc(b.status)}</span><div class="cardBtns"><button onclick="openModal(${b._i})">Modifier</button><button onclick="deleteBook(${b._i})">Supprimer</button></div></div></article>
+    <button type="button" class="badge" onclick="cycleBookStatus(${b._i})" title="Cliquer pour changer le statut">${esc(b.status)}</button><div class="cardBtns"><button onclick="openModal(${b._i})">Modifier</button><button onclick="deleteBook(${b._i})">Supprimer</button></div></div></article>
   `).join("") : `<div class="empty">Aucun livre pour le moment.<br><br>Clique sur “+ Ajouter” pour commencer ta bibliothèque 📚</div>`;
   update();
   syncActiveFilters();
@@ -161,11 +217,9 @@ function render() {
 function update() {
   count.textContent = books.length;
   totalMini.textContent = books.length;
-  sTotal.textContent = books.length;
-  sRead.textContent = books.filter(b => b.status === "Lu").length;
-  sCourse.textContent = books.filter(b => b.status === "En cours").length;
-  sWish.textContent = books.filter(b => b.status === "Wishlist").length;
-  sAuthors.textContent = new Set(books.map(b => b.author).filter(Boolean)).size;
+  const readPages = books.filter(b => b.status === "Lu").reduce((sum, b) => sum + (Number(b.pages) || 0), 0);
+  const readPagesEl = document.getElementById("totalReadPages");
+  if (readPagesEl) readPagesEl.textContent = String(readPages);
 }
 
 function exportData() {
@@ -446,6 +500,7 @@ document.getElementById("stopScanBtn")?.addEventListener("click", () => {
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 applyTheme();
 render();
+loadThrillerNews();
 
 
 grid.addEventListener("click", (event) => {
@@ -455,4 +510,15 @@ grid.addEventListener("click", (event) => {
   const rating = Number(btn.dataset.rateValue);
   if (!Number.isInteger(index) || !Number.isInteger(rating)) return;
   rateBook(index, rating);
+});
+
+
+
+grid.addEventListener("click", (event) => {
+  const newsBtn = event.target.closest(".add-news-btn");
+  if (!newsBtn) return;
+  const i = Number(newsBtn.dataset.newsIndex);
+  const n = thrillerNews[i];
+  if (!n) return;
+  addNewsToWishlist(n.title, n.author, n.cover);
 });
