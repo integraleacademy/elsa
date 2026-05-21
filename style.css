@@ -10,3 +10,5 @@
 .scanner-stop{width:100%}
 
 .isbn{font-size:11px;margin-top:5px;color:var(--muted)}
+
+.reading-metric{margin:10px 12px 0;color:var(--muted);font-size:13px}.news-list{margin-top:10px;display:flex;flex-direction:column;gap:8px}.news-item{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:8px;border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.03)}.news-meta{display:flex;flex-direction:column;gap:2px;min-width:0}.news-meta b{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.news-meta span{font-size:11px;color:var(--muted)}.news-item .soft{padding:6px 8px;border-radius:10px;font-size:11px;min-width:auto}
