@@ -407,17 +407,32 @@ async function handleManualIsbnSearch() {
 }
 
 
+function isIOSDevice() {
+  return /iPhone|iPad|iPod/i.test(navigator.userAgent)
+    || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+
+function isEmbeddedBrowser() {
+  const ua = navigator.userAgent || "";
+  const hasSafariEngine = /AppleWebKit/i.test(ua);
+  const isRealSafari = /Safari/i.test(ua)
+    && !/CriOS|FxiOS|EdgiOS|OPiOS|YaBrowser|DuckDuckGo|MiuiBrowser|SamsungBrowser/i.test(ua);
+  return hasSafariEngine && !isRealSafari;
+}
+
 function cameraTroubleshootingMessage(err) {
   const name = err?.name || "";
-  const iosHint = (/iPhone|iPad|iPod/i.test(navigator.userAgent))
-    ? "Sur iPhone/iPad, ouvrez le site directement dans Safari (pas dans un navigateur intégré) puis autorisez Caméra dans aA > Réglages du site web > Caméra."
-    : "";
+  const isIOS = isIOSDevice();
+  const webviewHint = "Ce navigateur intégré bloque souvent la caméra. Ouvre le site dans Safari puis réessaie.";
+  const safariHint = "Dans Safari, appuie sur aA > Réglages du site web > Caméra > Autoriser, puis recharge la page.";
 
   if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+    if (isIOS && isEmbeddedBrowser()) return webviewHint;
+    if (isIOS) return `Accès caméra refusé. ${safariHint}`;
     return "Accès caméra refusé. Autorise la caméra pour ce site puis relance le scan.";
   }
   if (name === "NotReadableError" || name === "TrackStartError") {
-    return "Caméra occupée par une autre app. Ferme les autres apps utilisant la caméra puis réessaie.";
+    return "Caméra indisponible (déjà utilisée par une autre app). Ferme les autres apps caméra puis réessaie.";
   }
   if (name === "OverconstrainedError" || name === "ConstraintNotSatisfiedError") {
     return "Caméra arrière indisponible. Réessaie après rotation du téléphone ou redémarrage du navigateur.";
@@ -425,7 +440,10 @@ function cameraTroubleshootingMessage(err) {
   if (name === "AbortError") {
     return "Démarrage caméra interrompu. Réessaie dans quelques secondes.";
   }
-  return (`Impossible de démarrer la caméra sur ce téléphone. ${iosHint}`).trim();
+
+  if (isIOS && isEmbeddedBrowser()) return webviewHint;
+  if (isIOS) return `Impossible de démarrer la caméra. ${safariHint}`;
+  return "Impossible de démarrer la caméra sur cet appareil. Essaie de recharger la page puis relancer le scan.";
 }
 
 async function startScanner() {
