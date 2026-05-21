@@ -112,12 +112,7 @@ function rateBook(index, rating) {
   save();
   render();
 }
-function syncActiveFilters() {
-  document.querySelectorAll(".tabs button[data-status], .mobile-nav button[data-status]").forEach(btn => {
-    const isActive = (btn.dataset.status || "") === statusFilter;
-    btn.classList.toggle("active", isActive);
-  });
-}
+function syncActiveFilters() {}
 
 function setStatus(s) { statusFilter = s; render(); }
 
@@ -126,6 +121,14 @@ function updateBookStatus(index, status) {
   books[index].status = status;
   save();
   render();
+}
+
+function cycleBookStatus(index) {
+  if (typeof books[index] === "undefined") return;
+  const statuses = ["À lire", "En cours", "Lu", "Wishlist"];
+  const currentIndex = statuses.indexOf(books[index].status);
+  const nextStatus = statuses[(currentIndex + 1) % statuses.length];
+  updateBookStatus(index, nextStatus);
 }
 function toggleAuthor() { if (typeof authorPanel !== "undefined") authorPanel.style.display = authorPanel.style.display === "none" ? "block" : "none"; }
 
@@ -152,7 +155,7 @@ function render() {
   grid.innerHTML = arr.length ? arr.map(b => `
     <article class="book"><div class="cover">${fakeCover(b)}${b.cover ? `<img src="${esc(b.cover)}" onerror="this.remove()">` : ""}</div>
     <div class="info"><div class="title">${esc(b.title)}</div><div class="author">${esc(b.author)}</div>${b.isbn ? `<div class="isbn">ISBN : ${esc(b.isbn)}</div>` : ""}${b.publisher ? `<div class="isbn">Éditeur : ${esc(b.publisher)}</div>` : ""}${b.publishedDate ? `<div class="isbn">Date : ${esc(b.publishedDate)}</div>` : ""}${b.pages ? `<div class="isbn">Pages : ${esc(String(b.pages))}</div>` : ""}${ratingButtons(b.rating, b._i)}
-    <span class="badge">${esc(b.status)}</span><div class="cardBtns"><button onclick="openModal(${b._i})">Modifier</button><button onclick="deleteBook(${b._i})">Supprimer</button></div></div></article>
+    <button type="button" class="badge" onclick="cycleBookStatus(${b._i})" title="Cliquer pour changer le statut">${esc(b.status)}</button><div class="cardBtns"><button onclick="openModal(${b._i})">Modifier</button><button onclick="deleteBook(${b._i})">Supprimer</button></div></div></article>
   `).join("") : `<div class="empty">Aucun livre pour le moment.<br><br>Clique sur “+ Ajouter” pour commencer ta bibliothèque 📚</div>`;
   update();
   syncActiveFilters();
@@ -161,11 +164,9 @@ function render() {
 function update() {
   count.textContent = books.length;
   totalMini.textContent = books.length;
-  sTotal.textContent = books.length;
-  sRead.textContent = books.filter(b => b.status === "Lu").length;
-  sCourse.textContent = books.filter(b => b.status === "En cours").length;
-  sWish.textContent = books.filter(b => b.status === "Wishlist").length;
-  sAuthors.textContent = new Set(books.map(b => b.author).filter(Boolean)).size;
+  const readPages = books.filter(b => b.status === "Lu").reduce((n,b)=> n + (Number(b.pages)||0), 0);
+  const el = document.getElementById("totalReadPages");
+  if (el) el.textContent = String(readPages);
 }
 
 function exportData() {
