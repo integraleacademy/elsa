@@ -55,6 +55,47 @@ def _read_books() -> list[dict]:
         return []
 
 
+def _book_identity(book: dict) -> str:
+    if not isinstance(book, dict):
+        return ""
+    isbn = _normalize_isbn(str(book.get("isbn", "")))
+    if isbn:
+        return f"isbn:{isbn}"
+    title = _normalize_text_key(str(book.get("title", "")))
+    author = _normalize_text_key(str(book.get("author", "")))
+    if title and author:
+        return f"title_author:{title}|{author}"
+    if title:
+        return f"title:{title}"
+    return ""
+
+
+def _merge_books_preserving_server(incoming_books: list[dict], current_books: list[dict]) -> list[dict]:
+    merged: list[dict] = []
+    index_by_key: dict[str, int] = {}
+
+    for book in current_books:
+        if not isinstance(book, dict):
+            continue
+        merged.append(book)
+        key = _book_identity(book)
+        if key:
+            index_by_key[key] = len(merged) - 1
+
+    for book in incoming_books:
+        if not isinstance(book, dict):
+            continue
+        key = _book_identity(book)
+        if key and key in index_by_key:
+            merged[index_by_key[key]] = book
+        else:
+            merged.append(book)
+            if key:
+                index_by_key[key] = len(merged) - 1
+
+    return merged
+
+
 def _write_books(books: list[dict]) -> None:
     tmp_file = BOOKS_FILE.with_suffix(".tmp")
     with tmp_file.open("w", encoding="utf-8") as f:
@@ -77,8 +118,10 @@ def put_books():
     payload = request.get_json(silent=True)
     if not isinstance(payload, list):
         return jsonify({"error": "Payload must be a JSON array."}), 400
-    _write_books(payload)
-    return jsonify({"ok": True, "count": len(payload)})
+    current_books = _read_books()
+    merged_books = _merge_books_preserving_server(payload, current_books)
+    _write_books(merged_books)
+    return jsonify({"ok": True, "count": len(merged_books)})
 
 
 
