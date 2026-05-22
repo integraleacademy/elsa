@@ -1,5 +1,3 @@
-const STORAGE_KEY = "elsaLibrary_EMPTY_MANUAL_v1";
-const ISBN_CACHE_KEY = "elsaIsbnCache_v1";
 const BOOKS_API_URL = "/api/books";
 
 function hasMissingMetadata(book) {
@@ -7,8 +5,8 @@ function hasMissingMetadata(book) {
   const checks = ["cover", "publisher", "publishedDate", "pageCount", "language", "categories", "description"];
   return checks.some(k => !book[k]);
 }
-let books = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-let isbnCache = JSON.parse(localStorage.getItem(ISBN_CACHE_KEY) || "{}");
+let books = [];
+let isbnCache = {};
 let statusFilter = "", sortBy = "recent", editIndex = null, tempCover = "";
 let thrillerNews = [];
 
@@ -20,7 +18,6 @@ let zxingReader = null;
 let zxingControls = null;
 
 async function save() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(books));
   try {
     const res = await fetch(BOOKS_API_URL, {
       method: "PUT",
@@ -32,7 +29,7 @@ async function save() {
     console.warn("Impossible de synchroniser la bibliothèque sur le serveur.", err);
   }
 }
-function saveIsbnCache() { localStorage.setItem(ISBN_CACHE_KEY, JSON.stringify(isbnCache)); }
+function saveIsbnCache() {}
 function esc(s) { return (s || "").replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m])); }
 function stars(n) { return n ? "★".repeat(n) + "☆".repeat(5 - n) : "☆☆☆☆☆"; }
 function ratingButtons(rating, index) {
@@ -43,12 +40,11 @@ function ratingButtons(rating, index) {
 function fakeCover(b) { return `<div class="fake-cover"><div class="fake-author">${esc(b.author || "Auteur")}</div><div class="fake-title">${esc(b.title || "Sans titre")}</div><div class="fake-mark">BIBLIOTHÈQUE D’ELSA</div></div>`; }
 
 function applyTheme() {
-  const theme = localStorage.getItem("elsa-theme") || "dark";
-  document.body.classList.toggle("light", theme === "light");
   const label = document.getElementById("themeLabel");
-  if (label) label.textContent = theme === "light" ? "☀️ Mode clair" : "🌙 Mode sombre";
+  const isLight = document.body.classList.contains("light");
+  if (label) label.textContent = isLight ? "☀️ Mode clair" : "🌙 Mode sombre";
 }
-function toggleTheme() { localStorage.setItem("elsa-theme", document.body.classList.contains("light") ? "dark" : "light"); applyTheme(); }
+function toggleTheme() { document.body.classList.toggle("light"); applyTheme(); }
 
 function openModal(i = null) {
   editIndex = i;
@@ -257,10 +253,9 @@ async function loadBooks() {
     const serverBooks = await res.json();
     if (Array.isArray(serverBooks)) {
       books = serverBooks;
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(books));
     }
   } catch (err) {
-    console.warn("Impossible de charger la bibliothèque depuis le serveur, utilisation des données locales.", err);
+    console.warn("Impossible de charger la bibliothèque depuis le serveur.", err);
   } finally {
     render();
   }
